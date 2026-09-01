@@ -4,7 +4,7 @@ import {
   normalizeAllowedHosts,
   normalizeHost,
   isPrivateOrRestrictedIp,
-} from '../sandbox_runtime/stealth/browser_guard.js';
+} from '../src/mcp/security/browser_guard.js';
 import {
   extractTargetHostname,
   isUrlInScope,
