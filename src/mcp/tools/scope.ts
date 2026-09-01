@@ -6,15 +6,13 @@ export const SetScopeSchema = z.object({
   targets: z
     .array(z.string())
     .optional()
-    .describe('Allowed target domains, IPs, CIDRs, or URLs. Domains/URLs are resolved on the trusted host and pinned to explicit IP CIDRs before nftables is provisioned.'),
+    .describe(
+      'Allowed target domains, single IPs, CIDRs, or URLs. Domains/URLs are resolved on the trusted host and pinned to explicit IP CIDRs before nftables is provisioned. Tor scopes require explicit host-level targets.'
+    ),
   proxy: z
-    .string()
+    .enum(['tor'])
     .optional()
-    .describe('Upstream proxy string: "tor", "socks5://127.0.0.1:9050", "http://127.0.0.1:8080" (Burp/Caido/ZAP)'),
-  ca_cert_b64: z
-    .string()
-    .optional()
-    .describe('Base64-encoded custom CA certificate for Burp/Caido/ZAP interception'),
+    .describe('Enable the sandbox-managed Tor proxy. External upstream HTTP/SOCKS proxies are not exposed until process-level containment is implemented.'),
   arm_canaries: z
     .boolean()
     .optional()
@@ -23,7 +21,9 @@ export const SetScopeSchema = z.object({
   allowed_cidrs: z
     .array(z.string())
     .optional()
-    .describe('Additional explicit IP/CIDR ranges to add to the egress allowlist. Unbounded /0 allowlists are rejected.'),
+    .describe(
+      'Additional explicit IP/CIDR ranges for direct L3 egress. Unbounded /0 allowlists are rejected.'
+    ),
   denied_cidrs: z
     .array(z.string())
     .optional()
@@ -33,7 +33,7 @@ export const SetScopeSchema = z.object({
 export function registerScopeTool(server: any, bridge: SandboxBridge) {
   server.tool(
     'sandbox_set_scope',
-    'Configures RoE audit scope, network egress firewall rules (nftables), proxy routing (Tor/Burp/Caido) and arms canary deception tripwires.',
+    'Configures the Rules-of-Engagement scope, pinned nftables egress policy, optional managed Tor routing, and canary tripwires.',
     SetScopeSchema.shape,
     async (args: z.infer<typeof SetScopeSchema>) => {
       try {
