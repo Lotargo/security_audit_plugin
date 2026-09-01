@@ -198,11 +198,7 @@ export class SandboxBridge {
       );
     }
 
-    const resolvedTargets = networkedMode
-      ? await resolveScopeTargets(options.targets || [])
-      : [];
     const explicitAllowed = normalizeCidrList(options.allowed_cidrs || [], 'allowed CIDR');
-    const allowedCidrs = [...new Set([...resolvedTargets, ...explicitAllowed])].sort();
     const deniedCidrs = options.denied_cidrs
       ? normalizeCidrList(options.denied_cidrs, 'denied CIDR')
       : undefined;
@@ -211,6 +207,19 @@ export class SandboxBridge {
     if (enableTor && targetHosts.length === 0) {
       throw new Error('Tor scope requires at least one explicit domain, URL, or single-IP target');
     }
+    if (enableTor && explicitAllowed.length > 0) {
+      throw new Error(
+        'Tor scope cannot include allowed_cidrs because that would create a direct agent egress path'
+      );
+    }
+
+    // Tor target names are intentionally NOT resolved on the host. This avoids local DNS leakage,
+    // preserves .onion support, and prevents target IPs from being added to the agent's direct
+    // nftables allowlist. Direct remote/hybrid scopes still pin DNS answers to explicit CIDRs.
+    const resolvedTargets = networkedMode && !enableTor
+      ? await resolveScopeTargets(options.targets || [])
+      : [];
+    const allowedCidrs = [...new Set([...resolvedTargets, ...explicitAllowed])].sort();
 
     if (networkedMode && allowedCidrs.length === 0 && !enableTor) {
       throw new Error('Remote/hybrid scope requires at least one target or allowed CIDR');
