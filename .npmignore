@@ -1,0 +1,49 @@
+# ==============================================================================
+# NPM Ignore: @security-audit/plugin
+# Excludes internal source/docs/tests from published NPM package tarball
+# ==============================================================================
+
+# Git & CI/CD
+.git/
+.github/
+.gitignore
+.gitattributes
+.dockerignore
+
+# Planning & Internal Documentation
+plan/
+IMPLEMENTATION_PLAN.md
+
+# Rust Source & Build Cache (Rust daemon is compiled into Docker image)
+sandbox_runtime/crates/
+sandbox_runtime/target/
+sandbox_runtime/Cargo.lock
+
+# Test Suites & Benchmarks
+tests/
+__tests__/
+test/
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
+coverage/
+.nyc_output/
+
+# Build & Tool Configurations
+tsconfig*.json
+tsup.config.ts
+vitest.config.ts
+jest.config.js
+.eslintrc*
+.prettierrc*
+.editorconfig
+
+# Logs & Dumps
+logs/
+reports/
+*.log
+*.har
+*.pcap
+*.sarif
+opplan.json

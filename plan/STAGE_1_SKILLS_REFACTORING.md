@@ -114,13 +114,14 @@ skills/<skill-name>/
 
 ## 4. Порядок выполнения и контрольные точки
 
-1. [ ] Создать структуру директорий `skills/<skill_name>/` для всех 19 скиллов.
-2. [ ] Написать мастер-скилл `skills/security-audit-orchestrator/SKILL.md` (OPPLAN, SARIF, триаж скоупа).
-3. [ ] Написать скилл `skills/tor-anonymity-onion-routing/SKILL.md` (Tor OPSEC, ротация, Onion v3).
-4. [ ] Поочередно отрефакторить 17 существующих файлов:
+1. [x] Создать структуру директорий `skills/<skill_name>/` для всех 19 скиллов.
+2. [x] Написать мастер-скилл `skills/security-audit-orchestrator/SKILL.md` (OPPLAN, SARIF, триаж скоупа).
+3. [x] Написать скилл `skills/tor-anonymity-onion-routing/SKILL.md` (Tor OPSEC, ротация, Onion v3).
+4. [x] Поочередно отрефакторить 17 существующих файлов:
    - Выделить YAML frontmatter;
    - Вынести таблицы в `references/`;
    - Добавить примеры в `examples/`;
    - Внедрить вызовы Sandbox MCP и обертку `<untrusted_payload>`.
-5. [ ] Удалить устаревшие файлы верхнего уровня в `skills/*.md`.
-6. [ ] Валидация: проверить синтаксис и корректность markdown-ссылок во всех 19 директориях.
+5. [x] Удалить устаревшие файлы верхнего уровня в `skills/*.md`.
+6. [x] Валидация: проверить синтаксис и корректность markdown-ссылок во всех 19 директориях.
+

@@ -1,0 +1,56 @@
+{
+  "audit_id": "audit-20260901-acme",
+  "created_at": "2026-09-01T11:00:00Z",
+  "mode": "hybrid",
+  "scope": {
+    "targets": ["https://staging.acme.com", "https://api.staging.acme.com"],
+    "allowed_ports": [80, 443],
+    "proxy_mode": "tor",
+    "canaries_armed": true
+  },
+  "phases": [
+    {
+      "phase_id": 1,
+      "name": "Scope & Anonymity Verification",
+      "status": "completed",
+      "assigned_skills": ["tor-anonymity-onion-routing"],
+      "findings_count": 0
+    },
+    {
+      "phase_id": 2,
+      "name": "Attack Surface Mapping & AST Extraction",
+      "status": "completed",
+      "assigned_skills": ["backend-topology-cartography", "osint-attack-surface-mapping"],
+      "findings_count": 2
+    },
+    {
+      "phase_id": 3,
+      "name": "Dynamic Vulnerability Auditing",
+      "status": "in_progress",
+      "assigned_skills": ["web-appsec-dast", "injection-input-validation", "access-control-business-logic"],
+      "findings_count": 4
+    },
+    {
+      "phase_id": 4,
+      "name": "Infrastructure & Supply Chain",
+      "status": "pending",
+      "assigned_skills": ["cloud-kubernetes-infra-audit", "cicd-supply-chain-security"],
+      "findings_count": 0
+    },
+    {
+      "phase_id": 5,
+      "name": "Reporting & SARIF Generation",
+      "status": "pending",
+      "assigned_skills": ["security-audit-orchestrator"],
+      "findings_count": 0
+    }
+  ],
+  "findings_summary": {
+    "critical": 1,
+    "high": 2,
+    "medium": 3,
+    "low": 0,
+    "informational": 0
+  },
+  "status": "active"
+}

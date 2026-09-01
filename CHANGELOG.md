@@ -8,13 +8,26 @@
 
 ## [Unreleased]
 
-### Added
-- Инициализация архитектурного плана проекта `IMPLEMENTATION_PLAN.md` и декомпозиция на 5 этапов в директории `plan/`.
-- Разработка концепции **Ratchet Bridge & Bi-Directional Rolling BYOK** (Ed25519, микро-ротация 15–30 сек, `zeroize` память в Rust).
-- Спецификация интеграции с сетью Tor (SOCKS5 `:9050`, ControlPort `:9051`, ротация `SIGNAL NEWNYM`).
-- Добавление специализированного 19-го скилла `tor-anonymity-onion-routing` и мастер-оркестратора `security-audit-orchestrator`.
-
 ---
+
+## [0.1.0] - 2026-09-01 (Stage 1: Skills Ecosystem Refactoring & Standardization)
+
+### Added
+- Создана стандартизированная структура AgentSkills для всех 19 экспертных скиллов (`SKILL.md` + `references/` + `examples/` + `scripts/`).
+- Реализован мастер-скилл координатор `skills/security-audit-orchestrator` с поддержкой операционного плана (OPPLAN), скоупинга и экспортного формата OASIS SARIF v2.1.0.
+- Реализован скилл анонимности и темного веба `skills/tor-anonymity-onion-routing` (Tor OPSEC, ротация IP адресов на лету по `SIGNAL NEWNYM`, проверка утечек DNS/WebRTC, аудит .onion v3 и RFC 8738 Onion-Location).
+- Добавлены справочники, чеклисты и практические скрипты для каждого из 19 направлений аудита.
+- Внедрена защита от Indirect Prompt Injection: все невалидированные внешние данные и дампы трафика изолируются в теги `<untrusted_payload>`.
+- Сформированы правила игнорирования `.gitignore`, `.npmignore` и `.dockerignore`.
+- Настроен слой CI/CD (`.github/workflows/ci.yml`, `.github/workflows/security.yml`) с автоматической валидацией скиллов, проверками Rust/TypeScript/Docker и сканированием секретов (Gitleaks).
+
+
+### Changed
+- Отрефакторены и приведены к стандартам Progressive Disclosure 17 существующих скиллов с выделением тяжелых спецификаций в директории `references/`.
+
+### Removed
+- Удалены 17 устаревших неструктурированных плоских файлов `skills/*.md`.
+
 
 <!-- 
 ================================================================================

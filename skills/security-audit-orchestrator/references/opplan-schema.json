@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OPPLAN",
+  "description": "Operational Plan for Security Audit Plugin",
+  "type": "object",
+  "required": ["audit_id", "created_at", "mode", "scope", "phases", "status"],
+  "properties": {
+    "audit_id": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "mode": { "type": "string", "enum": ["local_codebase", "remote_url", "hybrid"] },
+    "scope": {
+      "type": "object",
+      "required": ["targets", "allowed_ports", "proxy_mode"],
+      "properties": {
+        "targets": { "type": "array", "items": { "type": "string" } },
+        "allowed_ports": { "type": "array", "items": { "type": "integer" } },
+        "proxy_mode": { "type": "string", "enum": ["none", "tor", "upstream"] },
+        "canaries_armed": { "type": "boolean" }
+      }
+    },
+    "phases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["phase_id", "name", "status", "assigned_skills"],
+        "properties": {
+          "phase_id": { "type": "integer" },
+          "name": { "type": "string" },
+          "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "skipped", "failed"] },
+          "assigned_skills": { "type": "array", "items": { "type": "string" } },
+          "findings_count": { "type": "integer" }
+        }
+      }
+    },
+    "findings_summary": {
+      "type": "object",
+      "properties": {
+        "critical": { "type": "integer" },
+        "high": { "type": "integer" },
+        "medium": { "type": "integer" },
+        "low": { "type": "integer" },
+        "informational": { "type": "integer" }
+      }
+    },
+    "status": { "type": "string", "enum": ["planning", "active", "completed", "aborted"] }
+  }
+}

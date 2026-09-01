@@ -1,0 +1,102 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-skills:
+    name: Validate Skills Ecosystem (19 AgentSkills)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml
+
+      - name: Run Skills Validator
+        run: python scripts/validate_skills.py
+
+  typescript-ci:
+    name: TypeScript & Node.js CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+        continue-on-error: true
+
+      - name: Check package.json existence & Run TypeScript Checks
+        run: |
+          if [ -f package.json ]; then
+            npm ci
+            npm run lint --if-present
+            npm run typecheck --if-present
+            npm test --if-present
+          else
+            echo "package.json not initialized yet. Skipping TS check until Stage 3."
+          fi
+
+  rust-ci:
+    name: Rust Sandbox Kernel & Daemon CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        continue-on-error: true
+
+      - name: Check Cargo.toml & Run Cargo Checks
+        run: |
+          if [ -f sandbox_runtime/Cargo.toml ] || [ -f Cargo.toml ]; then
+            cargo check --workspace --all-targets
+            cargo test --workspace
+            cargo clippy --all-targets -- -D warnings
+            cargo fmt --all -- --check
+          else
+            echo "Cargo workspace not initialized yet. Skipping Rust check until Stage 2."
+          fi
+
+  docker-sandbox-check:
+    name: Docker Sandbox Image Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Verify Dockerfile syntax & Dry-Run Build
+        run: |
+          if [ -f sandbox_runtime/Dockerfile ] || [ -f Dockerfile ]; then
+            DOCKERFILE_PATH=$([ -f sandbox_runtime/Dockerfile ] && echo "sandbox_runtime/Dockerfile" || echo "Dockerfile")
+            docker buildx build --check -f "$DOCKERFILE_PATH" .
+          else
+            echo "Dockerfile not initialized yet. Skipping Docker build until Stage 2."
+          fi
