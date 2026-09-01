@@ -234,7 +234,19 @@ export class SandboxBridge {
   public async pollLogs(
     session: string = 'background_scan'
   ): Promise<{ session: string; active: boolean; delta_logs: string }> {
-    return this.request('GET', `/poll_logs?session=${encodeURIComponent(session)}`);
+    const raw = await this.request<{
+      session?: string;
+      active?: boolean;
+      is_active?: boolean;
+      delta_logs?: string;
+      log_diff?: string;
+    }>('GET', `/poll_logs?session=${encodeURIComponent(session)}`);
+
+    return {
+      session: raw.session || session,
+      active: Boolean(raw.active ?? raw.is_active),
+      delta_logs: raw.delta_logs ?? raw.log_diff ?? '',
+    };
   }
 
   public async browserAudit(options: BrowserAuditOptions): Promise<any> {
