@@ -1,15 +1,21 @@
-# Implementation Plan: Security Audit Plugin (NPM, Docker Sandbox, MCP Bridge & Skills Architecture)
+# Implementation Plan: Security Audit Plugin (NPM, Rust Sandbox Core, Stealth Browser, MCP Bridge & Skills Architecture)
 
 ## 1. Executive Summary & Goals
 
-Проект **`security-audit-plugin`** представляет собой кросс-платформенный NPM-пакет и плагин для ИИ-агентов (Google Antigravity / AGY, OpenCode, OpenAI/Codex, Claude Code, Cursor/Windsurf).
+Проект **`security-audit-plugin`** представляет собой высокопроизводительный, безопасный NPM-пакет и плагин для ИИ-агентов (Google Antigravity / AGY, OpenCode, OpenAI/Codex, Claude Code, Cursor/Windsurf), построенный на стеке **TypeScript (Host MCP Bridge) + Rust (Sandbox Kernel & Daemon) + Node.js (Stealth Browser)**.
 
 Плагин объединяет:
-1. **Изолированную Docker-песочницу** на базе решений [PurpleAILAB/Decepticon](https://github.com/PurpleAILAB/Decepticon) и философии активной защиты [Lotargo/Aegis-Core](https://github.com/Lotargo/Aegis-Core):
+1. **Изолированную Docker-песочницу с ядром на Rust (`sandbox-daemon`)**:
+   - **Ультра-производительность и безопасность памяти (`zeroize`)**: Бинарник на базе `Axum` / `Tokio` с мгновенным стартом (<5 мс) и гарантированным физическим затиранием ключей в RAM после использования.
+   - **Ratchet Bridge & Bi-Directional Rolling BYOK (Host $\leftrightarrow$ Sandbox MTD Control Plane)**:
+     - Двусторонняя криптографическая асимметрия: команды хоста подписываются `Host_Priv` (Ed25519, приватный ключ никогда не попадает в контейнер), ответы песочницы подписываются `Sandbox_Priv`.
+     - Скользящий рэтчет (Micro-Rotation каждые 15–30 секунд): фоновый адаптер непрерывно перегенерирует сессионный ключ $K(t)$ (ChaCha20-Poly1305), делая украденные из памяти контейнера токены бесполезными.
+     - Морфинг транспорта и конверта: динамическое изменение структуры пакетов, солей и заголовков между хостом и песочницей.
+     - Строгий Unidirectional Control Plane: песочница физически не может инициировать исходящие RPC к хостовой машине разработчика.
    - Защита от обратной атаки и выхода за скоуп через **RoE Egress Guardrail (`nftables`)**.
    - Двухсегментная изоляция сети (`management-net` vs `sandbox-net`).
    - **Emergency Kill Switch & Clean Re-spawn**: Аппаратный сброс сети (`conntrack -F` + `drop all`) при компрометации и мгновенное пересоздание контейнера из чистого иммутабельного образа за доли секунды.
-   - **Canary Traps & Deception Engine**: Размещение фиктивных файлов-приманок (`/root/.aws/credentials`, `/root/.ssh/id_rsa`, `/workspace/.env.decoy`) с отслеживанием доступа через `inotifywait`. Неавторизованное чтение приманки атакующим моментально триггерит тревогу и сетевой `kill_switch`.
+   - **Canary Traps & Deception Engine**: Размещение фиктивных файлов-приманок (`/root/.aws/credentials`, `/root/.ssh/id_rsa`, `/workspace/.env.decoy`) с отслеживанием доступа через Linux `inotify` в Rust. Неавторизованное чтение приманки атакующим моментально триггерит тревогу и сетевой `kill_switch`.
    - **Moving Target Defense & Chaos Mode Awareness (Aegis-Core Philosophy)**:
      - Распознавание замаскированных статус-кодов (когда успешный `200 OK` скрыт в `404/503/500`).
      - Аудит бинарных и непрозрачных RPC/gRPC протоколов (Proteus/Protobuf/gRPC-Web) через разбор клиентских бандлов и Source Maps.
@@ -20,13 +26,13 @@
    - **Decoy & Noise Traffic Generator**: Подмешивание реалистичных фоновых браузерных запросов (шрифты, аналитика, фавиконки, естественные паузы) для размытия следа аудита в SIEM/WAF.
    - **Smart Output Truncation & Size Watchdog**: Лимит вывода (30 000 символов) с автоматическим сохранением полных дампов в `/workspace/logs/cmd_<id>.log` для защиты контекстного окна LLM от переполнения.
    - **Background Jobs & Delta Log Polling**: Запуск длительных сканов в фоне (`start_background`) с получением инкрементальных диффов логов (`read_session_log_diff`) через `tmux`.
-   - **Stealth Browser Runtime**: Пропатченный Playwright (`playwright-extra` + `puppeteer-extra-plugin-stealth`) с эмуляцией мыши по кривым Безье (`ghost-cursor`), реалистичным набором текста (human typing) и обходом WAF/Bot-Protection (Cloudflare Turnstile, DataDome, Akamai, AWS WAF).
-   - **Fast Network Tier**: `curl_cffi` с поддержкой JA3/JA4 TLS Fingerprint impersonation (Chrome) для быстрого сбора ассетов и бандлов в обход WAF.
+   - **Stealth Browser Runtime (Node.js)**: Пропатченный Playwright (`playwright-extra` + `puppeteer-extra-plugin-stealth`) с эмуляцией мыши по кривым Безье (`ghost-cursor`), реалистичным набором текста (human typing) и обходом WAF/Bot-Protection (Cloudflare Turnstile, DataDome, Akamai, AWS WAF).
+   - **Fast Network Tier**: `rquest` / `curl-impersonate` с поддержкой JA3/JA4 TLS Fingerprint impersonation (Chrome) для быстрого сбора ассетов и бандлов в обход WAF.
    - **Proxy & IP Spoofing Engine**:
      - **L4 Upstream Proxy (Tor / SOCKS5 / HTTP / HTTPS)**: Защита реального IP разработчика, ротация адресов и интеграция с локальными прокси-перехватчиками (Burp Suite, Caido, OWASP ZAP) с поддержкой кастомных CA-сертификатов.
      - **L7 Header Spoofing**: Инъекция и ротация заголовков (`X-Forwarded-For`, `X-Real-IP`, `True-Client-IP`, `CF-Connecting-IP`, `Client-IP`) для проверки обхода Rate Limiting, ACL/белых списков (CWE-290) и GeoIP-политик.
    - Предустановленный SAST/DAST арсенал: Semgrep, Ast-Grep, Nmap, Subfinder, Sqlmap, Nikto, YARA.
-2. **Node.js MCP Сервер / Bridge**:
+2. **Node.js / TypeScript MCP Сервер & Bridge**:
    - Нативный MCP интерфейс (`@modelcontextprotocol/sdk`) через STDIO для прозрачного взаимодействия локального агента с песочницей.
 3. **Модульную экосистему из 19 экспертных Skills**:
    - 19 стандартизированных скиллов в формате AgentSkills / OpenAI / AGY (`SKILL.md` + `references/` + `examples/` + `scripts/`).
@@ -44,83 +50,87 @@
 В процессе реализации используется прямое обращение через **GitHub MCP Tool** к двум ключевым архитектурным референсам:
 
 ### 1. `PurpleAILAB/Decepticon` (Песочница, Изоляция, Ядро):
-| Назначение | Исходный файл в `PurpleAILAB/Decepticon` | Наш целевой компонент |
+| Назначение | Исходный файл в `PurpleAILAB/Decepticon` | Наш целевой компонент (Rust / TS) |
 | :--- | :--- | :--- |
 | **Сборка Docker-песочницы** | `containers/sandbox.Dockerfile`<br/>`containers/sandbox-entrypoint.sh` | `sandbox_runtime/Dockerfile`<br/>`sandbox_runtime/entrypoint.sh` |
-| **nftables RoE файрвол** | `packages/decepticon/decepticon/sandbox_kernel/egress.py` | `sandbox_runtime/sandbox_kernel/egress.py` |
-| **Управление tmux & фоновыми задачами** | `packages/decepticon/decepticon/sandbox_kernel/tmux.py`<br/>`packages/decepticon/decepticon/sandbox_kernel/daemon.py` | `sandbox_runtime/sandbox_kernel/tmux_manager.py` |
-| **FastAPI HTTP Демон** | `packages/decepticon/decepticon/sandbox_server/app.py` | `sandbox_runtime/sandbox_server/app.py` |
-| **Stealth Browser & WAF Evasion** | `packages/decepticon/decepticon/sandbox_web/templates/` | `sandbox_runtime/stealth/` |
+| **nftables RoE файрвол** | `packages/decepticon/decepticon/sandbox_kernel/egress.py` | `sandbox_runtime/crates/sandbox-kernel/src/egress.rs` |
+| **Управление tmux & фоновыми задачами** | `packages/decepticon/decepticon/sandbox_kernel/tmux.py` | `sandbox_runtime/crates/sandbox-kernel/src/tmux.rs` |
+| **Sandbox HTTP Демон** | `packages/decepticon/decepticon/sandbox_server/app.py` | `sandbox_runtime/crates/sandbox-daemon/src/main.rs` (Axum/Tokio) |
+| **Stealth Browser & WAF Evasion** | `packages/decepticon/decepticon/sandbox_web/templates/` | `sandbox_runtime/stealth/` (Node.js) |
 | **Стандарты MCP и Skills** | `integrations/agent-skills/decepticon/SKILL.md` | `skills/security-audit-orchestrator/SKILL.md` |
 
-### 2. `Lotargo/Aegis-Core` (Moving Target Defense, Active Deception & Binary RPC Auditing):
+### 2. `Lotargo/Aegis-Core` (Moving Target Defense, Active Deception & Rolling Keys):
 | Концепция Aegis-Core | Назначение в `Lotargo/Aegis-Core` | Применение в `security-audit-plugin` |
 | :--- | :--- | :--- |
+| **Bi-Directional Ephemeral Rotation** | Ротация сессионных ключей по TTL (10 мин) с `_cleanup_sessions` | **Ratchet Bridge & Bi-Directional Rolling BYOK**: перегенерация ключей связи Host $\leftrightarrow$ Sandbox каждые 15–30 сек (Ed25519 + ChaCha20 + `zeroize`). |
 | **Protocol Camouflage & Chaos Mode** | Обман сканеров путем маскировки `200 OK` в `404/503/500` статусы | Интеллектуальный анализ ответов в `web-appsec-dast` (анализ тела и заголовков, чтобы не пропускать замаскированные уязвимости). |
 | **Proteus Protocol (Encrypted gRPC/Protobuf)** | Скрытие структуры эндпоинтов и методов в бинарный поток | Эвристики для картографии (`backend-topology-cartography`) бинарных протоколов и gRPC-Web из клиентских бандлов. |
-| **Ephemeral Session Rotation** | Ротация сессионных ключей по TTL (10 мин) с `_cleanup_sessions` | Эфемерные одноразовые токены авторизации `SANDBOX_TOKEN` для хост-бриджа песочницы. |
 | **Canary / Decoy Layers** | Ложные эндпоинты и фальшивые ответы на зондирование | Использование приманок (`honeytokens`) и генерации фонового `decoy_traffic`. |
 
 ---
 
-## 3. Архитектура системы
+## 3. Архитектура системы (Rust + TypeScript/JS)
 
 ```mermaid
 flowchart TB
     subgraph Upstream["Upstream References (via GitHub MCP)"]
-        DecepticonRepo["PurpleAILAB/Decepticon (Sandbox & Kernel)"]
+        DecepticonRepo["PurpleAILAB/Decepticon (Sandbox Architecture)"]
         AegisCoreRepo["Lotargo/Aegis-Core (MTD & Deception Philosophy)"]
     end
 
-    subgraph Host["Хост-система (Разработчик / Агент)"]
+    subgraph Host["Хост-система (TypeScript / Node.js)"]
         Agent["AI Агент (AGY / OpenCode / Claude Code / Codex)"]
         SkillsEngine["Skills Ecosystem (19 скиллов в .agents/skills или global)"]
         NPMCLI["CLI Launcher (npx @security-audit/plugin)"]
         MCPServer["Node.js MCP Server (STDIO)"]
+        RatchetHost["Ratchet Bridge (Ed25519 Host Keypair, Micro-Rotation 15-30s)"]
         LocalBurp["Local Burp Suite / Caido / ZAP (:8080)"]
         SARIFViewer["IDE SARIF Viewer / Reports"]
     end
 
-    subgraph DockerEnv["Docker Sandbox (Основано на Decepticon + Aegis-Core)"]
+    subgraph DockerEnv["Docker Sandbox (Rust Kernel + Node.js Stealth Browser)"]
         direction TB
         subgraph MgmtNet["management-net"]
-            FastAPIDaemon["FastAPI Sandbox Daemon (:9999)"]
+            RatchetGuard["Ratchet Guard in Rust (Ed25519 Verifier + Zeroize Memory)"]
+            RustDaemon["Rust Sandbox Daemon (:9999, Axum/Tokio, ~15MB)"]
         end
         subgraph SandboxNet["sandbox-net (nftables default-drop)"]
-            TmuxManager["Tmux Session Manager (20K buffer, PS1 watchdog, Background Jobs)"]
-            OutputWatchdog["Output Truncation (30KB cap) -> /workspace/logs/"]
+            TmuxManager["Rust Tmux Manager (20K buffer, PS1 watchdog, Background Jobs)"]
+            OutputWatchdog["Rust Watchdog (30KB cap) -> /workspace/logs/"]
             subgraph DeceptionDefense["Deception & Canary Tripwires"]
-                HoneyTraps["Canary Honeytokens (.aws, .ssh, .env) + inotifywait"]
-                DecoyGen["Decoy Traffic & Noise Generator"]
+                HoneyTraps["Rust inotify Canary Watcher (.aws, .ssh, .env)"]
+                DecoyGen["Node.js Decoy Traffic & Noise Generator"]
             end
             subgraph SecurityGuard["Security, Panic, Tor & Proxy Controls"]
-                KillSwitch["Kill Switch (L2/L3 Network Blackout)"]
+                KillSwitch["Rust Kill Switch (L2/L3 Network Blackout)"]
                 TorDaemon["Tor Service (SOCKS5 :9050 / Control :9051)"]
                 ProxyEngine["Proxy Bridge (Tor / SOCKS5 / Burp / Caido) + L7 Header Spoofing"]
             end
             subgraph StealthBrowser["Stealth Browser & Network Tier"]
                 Chromium["Chromium Headless + playwright-extra + stealth"]
                 BezierMouse["Bezier Curve Mouse Engine (ghost-cursor) + Human Typing"]
-                CurlCffi["curl_cffi (JA3/JA4 Chrome TLS Impersonation)"]
+                RquestClient["Rust rquest (JA3/JA4 Chrome TLS Impersonation)"]
             end
             SecToolkit["SAST/AST (Semgrep, Ast-Grep) + SecTools (nmap, curl, etc.)"]
             WorkspaceVol["/workspace (Mounted codebase / plan / logs / reports)"]
         end
     end
 
-    DecepticonRepo -.->|Direct Code Fetch via GitHub MCP| Host
+    DecepticonRepo -.->|Direct Pattern Fetch via GitHub MCP| Host
     AegisCoreRepo -.->|Philosophy & Pattern Fetch via GitHub MCP| Host
     Agent -->|Чтение алгоритмов и чеклистов| SkillsEngine
     Agent -->|JSON-RPC via STDIO| MCPServer
+    MCPServer --> RatchetHost
+    RatchetHost == Bi-Directional Signed & Rotating Envelope ==> RatchetGuard
+    RatchetGuard --> RustDaemon
     NPMCLI -->|Управление контейнером & Hard Reset| DockerEnv
-    MCPServer -->|HTTP API / Bridge| FastAPIDaemon
-    FastAPIDaemon --> TmuxManager
-    TmuxManager --> OutputWatchdog
-    TmuxManager --> SecToolkit
-    TmuxManager --> StealthBrowser
-    TmuxManager --> SecurityGuard
-    TmuxManager --> DeceptionDefense
-    TmuxManager --> WorkspaceVol
+    RustDaemon --> TmuxManager
+    RustDaemon --> OutputWatchdog
+    RustDaemon --> SecToolkit
+    RustDaemon --> StealthBrowser
+    RustDaemon --> SecurityGuard
+    RustDaemon --> DeceptionDefense
+    RustDaemon --> WorkspaceVol
     HoneyTraps -.->|Tripwire Trigger| KillSwitch
     TorDaemon --> ProxyEngine
     ProxyEngine -.->|Tethered Traffic| LocalBurp
@@ -133,17 +143,18 @@ flowchart TB
 
 | Вектор угрозы | Источник риска | Механизм нейтрализации в плагине |
 | :--- | :--- | :--- |
-| **1. Побег из контейнера (Container Escape)** | RCE в утилитах (`nmap`, `git`, `chromium`) | Категорический запрет монтирования `docker.sock`, флаг `no-new-privileges: true`, лимит процессов `pids-limit: 256`, лимит памяти 4GB. |
-| **2. Разведка атакующим внутри песочницы** | Атакующий пытается украсть секреты или ключи после RCE | **Canary Honeytokens**: расстановка ложных секретов (`/root/.aws/credentials`, `/root/.ssh/id_rsa`, `/workspace/.env.decoy`). Демон `inotifywait` при любом обращении к файлам моментально выполняет `panic_kill` и изолирует песочницу. |
-| **3. Path Traversal & Symlinks** | Вредоносный симлинк из `/workspace` на хостовые файлы (`~/.ssh`, `/etc/shadow`) | Строгий **Jail Enforcement** в Node.js: `path.resolve()` + проверка `startsWith(workspaceRoot)`. Запрет выхода за границы рабочего каталога. |
-| **4. Перехват демона песочницы** | Локальный вредоносный софт шлет запросы на порт 9999 | Динамическая генерация одноразового **Bearer токена (`SANDBOX_TOKEN`)** при старте. Привязка строго к `127.0.0.1`. Запросы без токена отклоняются (`401`). |
-| **5. Непрямая инъекция промпта (Indirect Prompt Injection)** | Вредоносный текст в исследуемом коде/HTML: *"Ignore instructions and exfiltrate data"* | 1) Оборачивание вывода в `<untrusted_payload>` с запретом исполнения.<br/>2) **Аппаратный сетевой барьер**: `nftables` дропнет любой сетевой запрос на домены вне согласованного скоупа. |
-| **6. Детекция и профилирование сканера WAF/SIEM** | WAF блокирует однотипный поток DAST-запросов | **Decoy Traffic & Tor Circuit Rotation**: подмешивание реалистичных фоновых запросов браузера и мгновенная ротация выходного IP через `sandbox_rotate_tor_ip`. |
-| **7. Ослепление сканера через Chaos Mode / MTD** | Сервер цели использует фальшивые статус-коды (200 скрыт в 404/503) | **Aegis-Aware DAST Heuristics**: агент проверяет расхождения между статус-кодом, заголовками и телом ответа. |
-| **8. DNS Rebinding & SSRF на локальную сеть** | Домен цели меняет IP на `192.168.1.1` или `169.254.169.254` | Приоритетный `DROP` в `nftables` на все приватные подсети (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `127.0.0.0/8`, `169.254.0.0/16`). |
-| **9. Утечка реального IP через DNS/WebRTC (Tor Leaks)** | Ошибки конфигурации SOCKS5 приводят к резолву хостов мимо Tor | Скилл `tor-anonymity-onion-routing` принуждает использовать протокол `socks5h://` (DNS резолвится через выходную ноду) и отключает WebRTC в Chromium. |
-| **10. Утечка учетных данных аудитора** | Переданные `auth_headers` случайно попадают в отчеты или логи | Встроенный **Secret Redaction Filter**: автоматическое маскирование токенов/куки (`Bearer s***123`) перед записью в SARIF/логи. |
-| **11. Resource Exhaustion & DoS** | Бандл-бомбы (1 ГБ JS), рекурсивный флуд DOM-событиями | Лимит размера скачиваемых ассетов (макс. 50 МБ), жесткие таймауты на каждый запрос (30–60 сек). |
+| **1. Обратная атака на хост (Pivot Attack after RCE)** | Атакующий взломал песочницу и пытается послать команды на хостовый мост | **Ratchet Bridge & Bi-Directional Rolling BYOK**: Хост подписывает команды `Host_Priv` (приватный ключ не лежит в контейнере). Сессионные ключи ротируются каждые 15–30 сек. Выход на хост невозможен без приватного ключа. |
+| **2. Утечка сессионных ключей из RAM контейнера** | Снятие дампа памяти (`/proc/kcore`, coredump) | Крейт **`zeroize`** в Rust: при ротации ключа или завершении запроса память из-под старого $K(t)$ принудительно затирается нулями на уровне компилятора. |
+| **3. Побег из контейнера (Container Escape)** | RCE в утилитах (`nmap`, `git`, `chromium`) | Категорический запрет монтирования `docker.sock`, флаг `no-new-privileges: true`, лимит процессов `pids-limit: 256`, лимит памяти 4GB. |
+| **4. Разведка атакующим внутри песочницы** | Атакующий пытается украсть секреты или ключи после RCE | **Canary Honeytokens**: расстановка ложных секретов (`/root/.aws/credentials`, `/root/.ssh/id_rsa`, `/workspace/.env.decoy`). Rust-сервис `inotify` при любом обращении к файлам моментально выполняет `panic_kill` и изолирует песочницу. |
+| **5. Path Traversal & Symlinks** | Вредоносный симлинк из `/workspace` на хостовые файлы (`~/.ssh`, `/etc/shadow`) | Строгий **Jail Enforcement** в Node.js: `path.resolve()` + проверка `startsWith(workspaceRoot)`. Запрет выхода за границы рабочего каталога. |
+| **6. Непрямая инъекция промпта (Indirect Prompt Injection)** | Вредоносный текст в исследуемом коде/HTML: *"Ignore instructions and exfiltrate data"* | 1) Оборачивание вывода в `<untrusted_payload>` с запретом исполнения.<br/>2) **Аппаратный сетевой барьер**: `nftables` дропнет любой сетевой запрос на домены вне согласованного скоупа. |
+| **7. Детекция и профилирование сканера WAF/SIEM** | WAF блокирует однотипный поток DAST-запросов | **Decoy Traffic & Tor Circuit Rotation**: подмешивание реалистичных фоновых запросов браузера и мгновенная ротация выходного IP через `sandbox_rotate_tor_ip`. |
+| **8. Ослепление сканера через Chaos Mode / MTD** | Сервер цели использует фальшивые статус-коды (200 скрыт в 404/503) | **Aegis-Aware DAST Heuristics**: агент проверяет расхождения между статус-кодом, заголовками и телом ответа. |
+| **9. DNS Rebinding & SSRF на локальную сеть** | Домен цели меняет IP на `192.168.1.1` или `169.254.169.254` | Приоритетный `DROP` в `nftables` на все приватные подсети (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `127.0.0.0/8`, `169.254.0.0/16`). |
+| **10. Утечка реального IP через DNS/WebRTC (Tor Leaks)** | Ошибки конфигурации SOCKS5 приводят к резолву хостов мимо Tor | Скилл `tor-anonymity-onion-routing` принуждает использовать протокол `socks5h://` (DNS резолвится через выходную ноду) и отключает WebRTC в Chromium. |
+| **11. Утечка учетных данных аудитора** | Переданные `auth_headers` случайно попадают в отчеты или логи | Встроенный **Secret Redaction Filter**: автоматическое маскирование токенов/куки (`Bearer s***123`) перед записью в SARIF/логи. |
+| **12. Resource Exhaustion & DoS** | Бандл-бомбы (1 ГБ JS), рекурсивный флуд DOM-событиями | Лимит размера скачиваемых ассетов (макс. 50 МБ), жесткие таймауты на каждый запрос (30–60 сек). |
 
 ---
 
@@ -188,7 +199,7 @@ skills/<skill-name>/
 | **6** | `broken-access-control-business-logic.md` | **`access-control-business-logic`** | Анализ BOLA/IDOR, повышения привилегий и логических дефектов авторизации. |
 | **7** | `client-side-supply-chain-magecart-auditor.md` | **`client-supply-chain-magecart`** | Аудит сторонних скриптов, GTM/TMS, Subresource Integrity (SRI), защита от Magecart и PCI DSS v4.0. |
 | **8** | `cloud-native-kubernetes-infrastructure-auditor.md` | **`cloud-kubernetes-infra-audit`** | Анализ K8s манифестов, RBAC, сетевых политик и Cloud IAM конфигураций. |
-| **9** | `data-exposure-resilience-analyst.md` | **`data-exposure-privacy-resilience`** | Поиск утечек PII/PDN, чувствительных логов, незашифрованных секретов (GDPR/HIPAA). |
+| **9** | `data-exposure-privacy-resilience-analyst.md` | **`data-exposure-privacy-resilience`** | Поиск утечек PII/PDN, чувствительных логов, незашифрованных секретов (GDPR/HIPAA). |
 | **10** | `detection-purple-team-engineer.md` | **`purple-team-detection-engineering`** | Создание правил детекта (Sigma, YARA), аудит покрытия MITRE ATT&CK, внедрение канарских токенов и проверка телеметрии SIEM. |
 | **11** | `http-smuggling-web-cache-auditor.md` | **`http-smuggling-cache-attacks`** | Поиск уязвимостей HTTP Request Smuggling, Web Cache Poisoning и Cache Deception. |
 | **12** | `iam-active-directory-auditor.md` | **`iam-active-directory-audit`** | Аудит Active Directory, Kerberos, Hybrid IAM, OAuth2/OIDC делегирования. |
@@ -201,42 +212,34 @@ skills/<skill-name>/
 
 ---
 
-## 6. Docker Sandbox: Инструменты, Стелс-браузер, Tor & Deception-модули
+## 6. Docker Sandbox: Rust Ядро, Node.js Стелс-браузер, Tor & Deception
 
 ### Компоненты песочницы:
 1. **Базовый образ (`containers/sandbox.Dockerfile`)**:
-   - База: `kalilinux/kali-rolling` с кэшированием слоев через BuildKit.
-   - Runtime: Node.js 20+, Python 3.11+, headless Chromium (с системными библиотеками).
-   - **Tor Service & Controller**:
-     - Демон `tor` (порт SOCKS5 `9050`, ControlPort `9051`).
-     - `tor_controller.py`: модуль отправки команды `AUTHENTICATE "" -> SIGNAL NEWNYM` для мгновенной смены IP.
-   - **Stealth Playwright Engine**:
-     - `playwright-extra` + `puppeteer-extra-plugin-stealth` (маскировка webdriver, spoofing плагинов, languages, WebGL vendor, UA Client Hints).
-     - `ghost-cursor`: алгоритмическая генерация кубических кривых Безье $B(t)$ с учетом закона Фиттса, микро-джиттера и овершута для прохождения Cloudflare Turnstile и поведенческих антибот-систем.
-     - Human-like typing: рандомизированные интервалы между нажатиями клавиш.
-   - **Deception & Canary Modules**:
-     - `canary_trap.py`: фоновый сервис `inotifywait` для мониторинга ложных файлов (`/root/.aws/credentials`, `/root/.ssh/id_rsa`, `/workspace/.env.decoy`).
-     - `decoy_traffic.js`: генератор реалистичного фонового шума (запросы ассетов, случайные скроллы).
-   - **Fast Network Engine**:
-     - `curl_cffi` (JA3/JA4 TLS Chrome fingerprint impersonation, HTTP/3, redirect hardening, socks5h:// поддержка для Tor DNS).
-   - **Proxy & Certificate Integration**:
-     - Поддержка Tor, SOCKS5, HTTP, HTTPS upstream прокси.
-     - Системное доверие кастомным CA-сертификатам (`update-ca-certificates`) для прозрачного перехвата в Burp Suite / Caido / ZAP.
+   - База: `kalilinux/kali-rolling` (multi-stage build: Rust builder $\rightarrow$ minimal runtime).
+   - Runtime: Node.js 20+, headless Chromium (с системными библиотеками), Tor, tini.
+   - **Rust Sandbox Daemon (`sandbox_runtime/crates/sandbox-daemon`)**:
+     - Построен на `Axum` + `Tokio` (порт 9999).
+     - `RatchetGuard` middleware: верификация подписи `Host_Pub` (Ed25519), учет эпох $K(t)$ (ChaCha20Poly1305) и вызов `zeroize` для затирания памяти.
+     - Endpoints: `/execute`, `/execute_tmux`, `/provision_egress`, `/emergency_isolate`, `/rotate_tor`, `/arm_canary`, `/start_background`, `/poll_completion`, `/read_session_log_diff`.
+   - **Rust Sandbox Kernel (`sandbox_runtime/crates/sandbox-kernel`)**:
+     - `egress.rs`: компилятор правил `nftables` (allowlist, drop приватных сетей, открытие Tor/Proxy).
+     - `panic.rs`: Emergency Kill Switch (`conntrack -F` + drop all).
+     - `canary.rs`: мониторинг ложных файлов через Linux `inotify` syscalls.
+     - `tmux.rs`: управление сессиями `tmux`, парсинг PS1 маркеров и инкрементальные логи.
+     - `watchdog.rs`: ограничение вывода 30KB и спулинг логов в `/workspace/logs/`.
+   - **Node.js Stealth Browser Engine (`sandbox_runtime/stealth`)**:
+     - `playwright-extra` + `puppeteer-extra-plugin-stealth`.
+     - `ghost-cursor`: генерация кубических кривых Безье, микро-джиттера и задержек для обхода Turnstile/DataDome.
+     - `decoy_traffic.js`: фоновый генератор шума.
+   - **Fast Network Engine (Rust)**:
+     - Крейт `rquest` (JA3/JA4 TLS Chrome fingerprint impersonation, SOCKS5h Tor routing).
    - Security CLI: `nmap`, `curl`, `subfinder`, `sqlmap`, `nikto`, `yara`, `semgrep`, `ast-grep`, `tor`, `inotify-tools`.
    - Процесс-менеджер: `tini` (PID 1) для гарантированного сбора зомби-процессов.
-2. **Ядро песочницы (`sandbox_kernel/`)**:
-   - `egress.py`: компилятор правил `nftables` для фильтрации исходящего трафика (allowlist разрешенных целевых IP/доменов, drop приватных сетей хоста, открытие доступа к Tor и Upstream Proxy).
-   - `panic.py` (Emergency Kill Switch): мгновенная изоляция сети (`nft flush ruleset; nft add table inet panic; nft add chain inet panic out { type filter hook output priority 0; policy drop; }`) и сброс conntrack-таблицы.
-   - `canary.py`: установка и мониторинг канарских ловушек.
-   - `tmux_manager.py`: управление постоянными шелл-сессиями `tmux` с буфером 20K строк, анализом маркеров `PS1` и поддержкой фоновых задач (`start_background`, `poll_completion`).
-   - `watchdog.py`: защита от переполнения контекста (`MAX_OUTPUT_CHARS = 30_000`), перенаправление полных логов в `/workspace/logs/`.
-3. **HTTP Демон (`sandbox_server/app.py`)**:
-   - FastAPI сервис внутри контейнера на порту `9999`.
-   - Endpoints: `/execute`, `/execute_tmux`, `/provision_egress`, `/emergency_isolate`, `/rotate_tor`, `/arm_canary`, `/upload_files`, `/download_files`, `/start_background`, `/poll_completion`, `/read_session_log_diff`.
 
 ---
 
-## 7. MCP Сервер (Интерфейс для Агента)
+## 7. MCP Сервер (TypeScript / Node.js)
 
 Сервер реализуется на TypeScript/Node.js с использованием `@modelcontextprotocol/sdk` и подключается через STDIO.
 
@@ -264,7 +267,7 @@ skills/<skill-name>/
    - *Описание:* Запускает изолированную сессию Chromium со стелс-плагинами, Безье-курсором, генерацией Decoy-шума и опциональным проксированием (Tor/Burp/SOCKS5) для удаленного URL, собирает HAR-дамп, заголовки безопасности, cookies, storage и DOM-дерево.
    - *Аргументы:* `{ url: string, auth_headers?: Record<string, string>, cookies?: object[], proxy?: string, bypass_turnstile?: boolean, generate_decoy_noise?: boolean, spoof_headers?: Record<string, string> }`
 8. **`sandbox_bundle_extract`**:
-   - *Описание:* Скачивает клиентские JS-бандлы удаленного сайта через `curl_cffi` (JA3/JA4 impersonation + proxy), извлекает Source Maps и строит карту REST и Protobuf/gRPC-Web эндпоинтов.
+   - *Описание:* Скачивает клиентские JS-бандлы удаленного сайта через Rust `rquest` (JA3/JA4 impersonation + proxy), извлекает Source Maps и строит карту REST и Protobuf/gRPC-Web эндпоинтов.
    - *Аргументы:* `{ url: string, proxy?: string, out_dir?: string }`
 9. **`sandbox_http_probe`**:
    - *Описание:* Отправляет точечный HTTP/HTTPS запрос с кастомными заголовками (включая L7 IP spoofing: `X-Forwarded-For`, `Client-IP`), телом и прокси для проверки CORS, smuggling, CSRF, обхода ACL.
@@ -290,13 +293,14 @@ security_audit_plugin/
 ├── README.md                      # Документация и быстрый старт
 ├── bin/
 │   └── cli.js                     # CLI точка входа: npx @security-audit/plugin <command>
-├── src/
+├── src/                           # TypeScript Host Bridge & MCP
 │   ├── index.ts                   # Экспорт программного API
 │   ├── cli/                       # Команды CLI: init, doctor, start-sandbox, install-skills, mcp
 │   ├── mcp/                       # MCP Server на @modelcontextprotocol/sdk
 │   │   ├── server.ts
-│   │   ├── bridge.ts              # Мост Docker / HTTP client к sandbox_server
-│   │   ├── security/              # Jail check, Path Normalization, Secret Redaction
+│   │   ├── bridge.ts              # Мост Docker / HTTP client к sandbox-daemon
+│   │   ├── security/              # Ratchet Bridge, Jail check, Path Normalization, Secret Redaction
+│   │   │   ├── ratchet_bridge.ts  # Bi-Directional BYOK, Micro-Rotation (15-30s), Transport Morphing
 │   │   │   ├── jail.ts
 │   │   │   └── redaction.ts
 │   │   └── tools/                 # Реализации всех MCP-инструментов (вкл. rotate_tor, background, SARIF)
@@ -305,28 +309,34 @@ security_audit_plugin/
 │   └── docker/
 │       ├── runner.ts              # Управление жизненным циклом Docker контейнера (spawn/destroy/recreate)
 │       └── docker-compose.yml
-├── sandbox_runtime/               # Исходники, собираемые внутрь Docker-образа
+├── sandbox_runtime/               # Исходники, собираемые внутрь Docker-образа (Rust + JS)
 │   ├── Dockerfile
 │   ├── entrypoint.sh
-│   ├── tor/                       # Модуль интеграции с сетью Tor
-│   │   ├── torrc                  # Конфигурация SOCKS5 + ControlPort
-│   │   └── controller.py          # NEWNYM ротация
-│   ├── deception/                 # Модули фиктивного следа и ловушек
-│   │   ├── canary_trap.py         # inotifywait ловушка
-│   │   └── decoy_traffic.js       # Генератор реалистичного шума
-│   ├── stealth/                   # Модули антибот-эмуляции и прокси
+│   ├── Cargo.toml                 # Rust Workspace manifest
+│   ├── crates/
+│   │   ├── sandbox-daemon/        # Axum + Tokio HTTP Демон (:9999)
+│   │   │   ├── Cargo.toml
+│   │   │   └── src/
+│   │   │       ├── main.rs
+│   │   │       ├── auth.rs        # RatchetGuard middleware (Ed25519 + Zeroize)
+│   │   │       └── routes/
+│   │   └── sandbox-kernel/        # Ядро безопасности (Rust)
+│   │       ├── Cargo.toml
+│   │       └── src/
+│   │           ├── lib.rs
+│   │           ├── egress.rs      # nftables RoE компилятор
+│   │           ├── panic.rs       # Kill Switch
+│   │           ├── canary.rs      # Linux inotify ловушки
+│   │           ├── tmux.rs        # Управление tmux сессиями
+│   │           └── watchdog.rs    # Лимитер 30KB
+│   ├── stealth/                   # Node.js Стелс-браузер
+│   │   ├── package.json
 │   │   ├── mouse_bezier.js        # ghost-cursor интеграция
-│   │   └── browser_launcher.js    # playwright-extra stealth + proxy + certs
-│   ├── sandbox_server/            # FastAPI демон
-│   │   ├── __main__.py
-│   │   └── app.py
-│   └── sandbox_kernel/            # Ядро безопасности Decepticon
-│       ├── egress.py              # nftables RoE файрвол (allowlist + proxy opening)
-│       ├── panic.py               # Emergency Kill Switch (L2/L3 blackout)
-│       ├── canary.py              # Менеджер приманок
-│       ├── watchdog.py            # Лимитер вывода 30KB и запись в /workspace/logs/
-│       ├── daemon.py              # DaemonSandbox
-│       └── tmux_manager.py        # Управление tmux (фоновые сессии + дифф логов)
+│   │   ├── browser_launcher.js    # playwright-extra stealth + proxy + certs
+│   │   └── decoy_traffic.js       # Генератор реалистичного шума
+│   └── tor/
+│       ├── torrc
+│       └── controller.py          # или контроллер на Rust
 ├── skills/                        # 19 структурированных скиллов
 │   ├── security-audit-orchestrator/
 │   │   ├── SKILL.md
@@ -366,24 +376,28 @@ security_audit_plugin/
    - Встроить явные вызовы инструментов Sandbox MCP (`sandbox_exec`, `sandbox_start_background`, `sandbox_poll_logs`, `sandbox_browser_audit`, `sandbox_bundle_extract`, `sandbox_http_probe`, `sandbox_rotate_tor_ip` с L7 спуфингом).
    - Внедрить разметку `<untrusted_payload>` для защиты от Indirect Prompt Injection.
 
-### Этап 2: Docker Sandbox Runtime (Decepticon Fetch, Tor Integration, Aegis Philosophy & Deception)
-1. Выгрузить через GitHub MCP референсный `egress.py` и адаптировать `sandbox_runtime/sandbox_kernel/egress.py` и `panic.py` (с приоритетным `DROP` на приватные подсети и открытием доступа к Tor).
-2. Настроить сервис `tor` внутри контейнера (`torrc` с ControlPort `9051`) и модуль `sandbox_runtime/tor/controller.py`.
-3. Реализовать `sandbox_runtime/deception/canary_trap.py` и `sandbox_kernel/canary.py` (расстановка приманок `.aws`, `.ssh`, `.env` и мгновенный `panic_kill` через `inotifywait`).
-4. Реализовать генератор шума `sandbox_runtime/deception/decoy_traffic.js`.
-5. Реализовать `sandbox_runtime/sandbox_kernel/watchdog.py` (30KB output cap + log spooling).
-6. Адаптировать `sandbox_runtime/sandbox_kernel/tmux_manager.py` по референсу из Decepticon.
-7. Настроить стелс и прокси стек: `ghost-cursor`, `playwright-extra`, `puppeteer-extra-plugin-stealth`, CA-сертификаты для Burp/ZAP, `curl_cffi` (JA3/JA4 + proxies + socks5h).
-8. Адаптировать `sandbox_runtime/sandbox_server/app.py` (FastAPI демон с Bearer-аутентификацией, эндпоинтами `/arm_canary` и `/rotate_tor`).
-9. Написать оптимизированный `sandbox_runtime/Dockerfile` (Kali base, Chromium, Node, Python, SAST/DAST утилиты, `tor`, `inotify-tools`, `tini`, `no-new-privileges`).
+### Этап 2: Docker Sandbox Runtime (Rust Kernel, Node.js Stealth Browser, Tor & Deception)
+1. Реализовать Rust крейт `sandbox-kernel`:
+   - `egress.rs` (генератор правил `nftables` с приоритетным `DROP` на приватные подсети и открытием Tor/Proxy).
+   - `panic.rs` (мгновенный сетевой блэкаут `conntrack -F` + drop all).
+   - `canary.rs` (мониторинг ловушек `.aws`, `.ssh`, `.env` через Linux `inotify`).
+   - `tmux.rs` (управление постоянными сессиями `tmux` и дельта-логи).
+   - `watchdog.rs` (лимитер 30KB с записью в `/workspace/logs/`).
+2. Реализовать Rust демон `sandbox-daemon` (`Axum` + `Tokio`):
+   - Middleware `RatchetGuard` (Ed25519 верификация, учет эпох, затирание `zeroize`).
+   - Endpoints: `/execute`, `/execute_tmux`, `/provision_egress`, `/emergency_isolate`, `/rotate_tor`, `/arm_canary`, `/start_background`, `/poll_completion`, `/read_session_log_diff`.
+3. Настроить Node.js стелс стек: `ghost-cursor` (кривые Безье), `playwright-extra`, `puppeteer-extra-plugin-stealth`, `decoy_traffic.js`.
+4. Настроить сервис `tor` внутри контейнера (`torrc` с ControlPort `9051`).
+5. Написать многоэтапный `sandbox_runtime/Dockerfile` (Rust builder $\rightarrow$ Kali runtime с Chromium, Node.js, утилитами и `tini`).
 
-### Этап 3: Node.js MCP Server, SARIF Builder & Host Bridge
+### Этап 3: Node.js / TypeScript MCP Server, Ratchet Bridge & SARIF Builder
 1. Настроить TypeScript проект с `@modelcontextprotocol/sdk`.
-2. Реализовать модуль безопасности хоста: `jail.ts` (Path Traversal guard) и `redaction.ts` (маскирование секретов в логах).
-3. Реализовать `src/sarif/builder.ts` для генерации стандартизированных отчетов OASIS SARIF v2.1.0.
-4. Реализовать `DockerRunner` (проверка наличия Docker, запуск/остановка/принудительное пересоздание контейнера песочницы, изоляция сокетов).
-5. Реализовать `SandboxBridge` (HTTP-клиент к `localhost:9999` с генерацией `SANDBOX_TOKEN`).
-6. Зарегистрировать все MCP-инструменты (`sandbox_set_scope`, `sandbox_rotate_tor_ip`, `sandbox_exec`, `sandbox_interactive_input`, `sandbox_start_background`, `sandbox_poll_logs`, `sandbox_browser_audit`, `sandbox_bundle_extract`, `sandbox_http_probe`, `sandbox_kill_switch`, `sandbox_reset`, `sandbox_fs_*`).
+2. Реализовать `src/mcp/security/ratchet_bridge.ts` (Bi-directional Rolling BYOK, генератор Ed25519, ротация сессионных ключей каждые 15–30 сек, морфинг конвертов).
+3. Реализовать модуль безопасности хоста: `jail.ts` (Path Traversal guard) и `redaction.ts` (маскирование секретов в логах).
+4. Реализовать `src/sarif/builder.ts` для генерации стандартизированных отчетов OASIS SARIF v2.1.0.
+5. Реализовать `DockerRunner` (проверка наличия Docker, запуск/остановка/принудительное пересоздание контейнера песочницы, изоляция сокетов).
+6. Реализовать `SandboxBridge` (клиент взаимодействия с песочницей через `RatchetBridge`).
+7. Зарегистрировать все MCP-инструменты (`sandbox_set_scope`, `sandbox_rotate_tor_ip`, `sandbox_exec`, `sandbox_interactive_input`, `sandbox_start_background`, `sandbox_poll_logs`, `sandbox_browser_audit`, `sandbox_bundle_extract`, `sandbox_http_probe`, `sandbox_kill_switch`, `sandbox_reset`, `sandbox_fs_*`).
 
 ### Этап 4: NPM CLI и Интеграционные манифесты
 1. Реализовать CLI утилиту `bin/cli.js`:
@@ -394,18 +408,22 @@ security_audit_plugin/
 2. Создать манифесты `plugin.json` и `mcp_config.json` для AGY и OpenCode.
 
 ### Этап 5: Сквозное тестирование и валидация
-1. Тестирование локального SAST-аудита в режиме `local` (проверка изоляции сети `default drop` и выгрузки находок в SARIF).
-2. Тестирование удаленного DAST-аудита в режиме `remote` по внешнему URL (проверка работы Chromium со стелс-плагинами и кривыми Безье, перехвата CDP, распознавания MTD/Chaos Mode, генерации Decoy-шума, сбора HAR и извлечения бандлов).
-3. Тестирование работы через Tor и динамической смены IP:
+1. Тестирование работы криптографического рэтчета (`RatchetBridge` $\leftrightarrow$ `RatchetGuard`):
+   - Проверка успешного прохождения подписанных запросов от хоста к Rust демону.
+   - Проверка отклонения запросов с протухшим $K(t)$ ключом или неверной подписью.
+   - Проверка невозможности инициировать обратный вызов из песочницы на хост.
+2. Тестирование локального SAST-аудита в режиме `local` (проверка изоляции сети `default drop` и выгрузки находок в SARIF).
+3. Тестирование удаленного DAST-аудита в режиме `remote` по внешнему URL (проверка работы Chromium со стелс-плагинами и кривыми Безье, перехвата CDP, распознавания MTD/Chaos Mode, генерации Decoy-шума, сбора HAR и извлечения бандлов).
+4. Тестирование работы через Tor и динамической смены IP:
    - Запуск `sandbox_set_scope` с `proxy: "tor"`.
    - Проверка текущего исходящего IP, вызов `sandbox_rotate_tor_ip`, проверка получения нового IP.
-4. Тестирование работы через Upstream Proxy (Burp/Caido/SOCKS5) и L7 Header Spoofing (`X-Forwarded-For`).
-5. Тестирование механизмов самозащиты и Deception:
+5. Тестирование работы через Upstream Proxy (Burp/Caido/SOCKS5) и L7 Header Spoofing (`X-Forwarded-For`).
+6. Тестирование механизмов самозащиты и Deception:
    - Попытка выхода за границы каталога через `sandbox_fs_read("../../.ssh/id_rsa")` (проверка `AccessDenied`).
    - Попытка обращения к локальной сети (`192.168.1.1`) из контейнера (проверка сетевого `DROP`).
-   - Попытка чтения приманки `/root/.aws/credentials` внутри контейнера (проверка мгновенного срабатывания `inotifywait` и вызова `kill_switch`).
+   - Попытка чтения приманки `/root/.aws/credentials` внутри контейнера (проверка мгновенного срабатывания `inotify` в Rust и вызова `kill_switch`).
    - Проверка маскирования `Bearer s***` в отчетах SARIF.
-6. Тестирование фоновых задач (`sandbox_start_background`, `sandbox_poll_logs`) и ограничения вывода (30KB watchdog).
-7. Аварийные процедуры: вызов `sandbox_kill_switch` и быстрое пересоздание контейнера через `sandbox_reset`.
-8. Проверка интерактивного ввода в `tmux` (утилиты с запросом `[y/N]`).
-9. Валидация распознавания скиллов в AGY и OpenCode.
+7. Тестирование фоновых задач (`sandbox_start_background`, `sandbox_poll_logs`) и ограничения вывода (30KB watchdog).
+8. Аварийные процедуры: вызов `sandbox_kill_switch` и быстрое пересоздание контейнера через `sandbox_reset`.
+9. Проверка интерактивного ввода в `tmux` (утилиты с запросом `[y/N]`).
+10. Валидация распознавания скиллов в AGY и OpenCode.
