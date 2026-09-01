@@ -8,6 +8,7 @@
 .github/
 .gitignore
 .gitattributes
+.dockerignore
 
 # Node.js & Host Dependencies
 node_modules/
@@ -17,9 +18,18 @@ npm-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Rust Host Target Directory
+# Rust Host Target Directory & Stealth node_modules
 target/
 sandbox_runtime/target/
+sandbox_runtime/stealth/node_modules/
+sandbox_runtime/stealth/package-lock.json
+
+# Host TypeScript & Skills (Not needed inside Docker build context)
+src/
+tests/
+skills/
+plugins/
+bin/
 
 # IDE & Local Workspace Files
 .idea/
@@ -29,6 +39,7 @@ Thumbs.db
 
 # Documentation & Plans
 plan/
+plans/
 IMPLEMENTATION_PLAN.md
 CHANGELOG.md
 

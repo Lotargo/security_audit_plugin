@@ -48,13 +48,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // 3. Initialize Shared Kernel Managers & Auth State
+    let _ = sandbox_kernel::tmux::TmuxManager::reap_orphaned_tmux_sessions();
+
     let auth_state = RatchetAuthState::new(host_pubkey_hex.as_deref(), insecure_dev)
         .expect("Failed to initialize RatchetAuthState");
 
     let canary_mgr = Arc::new(Mutex::new(CanaryManager::new()));
 
     // 4. Build API Routers
-    let health_router = Router::new().route("/health", get(handle_health));
+    let health_router = Router::new()
+        .route("/health", get(handle_health))
+        .layer(Extension(canary_mgr.clone()));
 
     let protected_routes = Router::new()
         // Execution
@@ -113,11 +117,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn handle_health() -> Json<serde_json::Value> {
+async fn handle_health(
+    Extension(canary_mgr): Extension<Arc<Mutex<CanaryManager>>>,
+) -> Json<serde_json::Value> {
+    let mgr = canary_mgr.lock().await;
     Json(json!({
         "status": "ok",
         "service": "sandbox-daemon",
         "version": "0.1.0",
-        "isolated": sandbox_kernel::KillSwitch::is_isolated()
+        "isolated": sandbox_kernel::KillSwitch::is_isolated(),
+        "canary_armed": mgr.is_armed(),
+        "canary_traps_count": mgr.get_traps().len(),
+        "canary_triggered_count": mgr.triggered_count()
     }))
 }

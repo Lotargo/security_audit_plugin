@@ -80,6 +80,7 @@ export async function runInstallSkills(options: {
   path?: string;
   skills?: string[] | string;
   mcp?: boolean;
+  docker?: boolean;
 }): Promise<void> {
   const sourceSkillsDir = findSourceSkillsDir();
   const destinationDirs = resolveDestinationDirs(options.target, options.path);
@@ -118,6 +119,23 @@ export async function runInstallSkills(options: {
     }
 
     console.log(bold(green(`\n✔ Successfully installed ${selectedSkills.length} skills into ${destinationDir}`)));
+  }
+
+  // Pre-warm / pull Docker sandbox image if requested or enabled
+  if (options.docker) {
+    console.log(bold(cyan('\n--- Checking Sandbox Docker Image ---')));
+    const { DockerRunner } = await import('../../docker/runner.js');
+    const runner = new DockerRunner();
+    if (runner.isDockerAvailable()) {
+      try {
+        await runner.ensureImageAvailable();
+        console.log(green('✔ Sandbox Docker image is cached and ready for isolation.'));
+      } catch (err: any) {
+        console.log(yellow(`⚠ Could not pre-warm Docker image: ${err.message}`));
+      }
+    } else {
+      console.log(yellow('⚠ Docker daemon is not running. Sandbox will be pulled on first audit execution.'));
+    }
   }
 
   if (options.mcp) {

@@ -125,4 +125,17 @@ describe('CLI Commands Test Suite', () => {
       expect(fs.existsSync(tmpDir)).toBe(false);
     });
   });
+
+  describe('findSandboxRuntimeDir & DockerRunner', () => {
+    it('successfully locates bundled sandbox_runtime with Dockerfile', async () => {
+      const { findSandboxRuntimeDir, DockerRunner } = await import('../src/docker/runner.js');
+      const runtimeDir = findSandboxRuntimeDir();
+      expect(runtimeDir).not.toBeNull();
+      expect(fs.existsSync(path.join(runtimeDir!, 'Dockerfile'))).toBe(true);
+
+      const runner = new DockerRunner();
+      expect(typeof runner.isDockerAvailable).toBe('function');
+      expect(typeof runner.isImageAvailable).toBe('function');
+    });
+  });
 });

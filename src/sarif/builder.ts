@@ -81,7 +81,26 @@ export class SarifReportBuilder {
       locations.push(loc);
     }
 
-    // 3. Register Result
+    // 3. Build Fixes
+    const fixes = finding.fixes?.map((f) => ({
+      description: { text: f.description },
+      changes: [
+        {
+          artifactLocation: { uri: f.file.replace(/\\/g, '/') },
+          replacements: [
+            {
+              deletedRegion: {
+                startLine: f.startLine || 1,
+                endLine: f.endLine || f.startLine || 1,
+              },
+              insertedContent: { text: f.replacement },
+            },
+          ],
+        },
+      ],
+    }));
+
+    // 4. Register Result
     const ruleIndex = Array.from(this.rules.keys()).indexOf(finding.ruleId);
     const result: SarifResult = {
       ruleId: finding.ruleId,
@@ -92,13 +111,16 @@ export class SarifReportBuilder {
         markdown: finding.markdownMessage || finding.message,
       },
       locations: locations.length > 0 ? locations : undefined,
+      fixes: fixes && fixes.length > 0 ? fixes : undefined,
       properties: {
         cvssScore: finding.cvssScore,
         cwe: finding.cwe,
         owasp: finding.owasp,
         mitre: finding.mitre,
         remediation: finding.remediation,
-      },
+        remediationMarkdown: finding.remediationMarkdown,
+        attackGraph: finding.attackGraph,
+      } as any,
     };
 
     this.results.push(result);
@@ -209,8 +231,39 @@ export class SarifReportBuilder {
         md += `**Code Snippet**:\n\`\`\`\n${loc.region.snippet.text}\n\`\`\`\n\n`;
       }
 
-      if (res.properties?.remediation) {
+      // Attack graph visualization if available
+      const attackGraph = (res.properties as any)?.attackGraph;
+      if (attackGraph && attackGraph.nodes && attackGraph.nodes.length > 0) {
+        md += `**Attack Vector & Blast Radius Graph**:\n\`\`\`mermaid\nflowchart LR\n`;
+        for (const n of attackGraph.nodes) {
+          md += `    ${n.id}["${n.label}"]\n`;
+        }
+        for (const e of attackGraph.edges || []) {
+          md += `    ${e.from} -->|"${e.label || 'exploits'}"| ${e.to}\n`;
+        }
+        md += `\`\`\`\n\n`;
+      }
+
+      // Remediation markdown or text
+      const remMd = (res.properties as any)?.remediationMarkdown;
+      if (remMd) {
+        md += `> [!TIP]\n> **Remediation Guide**:\n> ${remMd}\n\n`;
+      } else if (res.properties?.remediation) {
         md += `> [!TIP]\n> **Remediation Advice**:\n> ${res.properties.remediation}\n\n`;
+      }
+
+      // Suggested code fixes
+      if (res.fixes && res.fixes.length > 0) {
+        md += `**Suggested Fix**:\n`;
+        for (const fix of res.fixes) {
+          md += `*${fix.description.text}*\n`;
+          for (const ch of fix.changes || []) {
+            for (const rep of ch.replacements) {
+              md += `\`\`\`diff\n+// Replacement for ${ch.artifactLocation.uri} (Lines ${rep.deletedRegion.startLine}-${rep.deletedRegion.endLine}):\n${rep.insertedContent?.text || ''}\n\`\`\`\n`;
+            }
+          }
+        }
+        md += `\n`;
       }
 
       md += `---\n\n`;

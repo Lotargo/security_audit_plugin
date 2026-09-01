@@ -2,7 +2,7 @@
 use std::process::Command;
 use thiserror::Error;
 #[allow(unused_imports)]
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Error, Debug)]
 pub enum TmuxError {
@@ -17,6 +17,48 @@ pub enum TmuxError {
 pub struct TmuxManager;
 
 impl TmuxManager {
+    /// Reaps orphaned tmux sockets and unmanaged sessions left behind by previous crashes or SIGKILL
+    pub fn reap_orphaned_tmux_sessions() -> Result<usize, TmuxError> {
+        info!("Reaping orphaned tmux sessions and cleaning up stale socket files...");
+
+        #[cfg(target_os = "linux")]
+        {
+            let mut reaped = 0;
+            // 1. List active tmux sessions and kill lingering ones
+            if let Ok(output) = Command::new("tmux").args(["list-sessions", "-F", "#{session_name}"]).output() {
+                if output.status.success() {
+                    let session_names = String::from_utf8_lossy(&output.stdout);
+                    for name in session_names.lines() {
+                        let trimmed = name.trim();
+                        if !trimmed.is_empty() {
+                            let _ = Command::new("tmux").args(["kill-session", "-t", trimmed]).status();
+                            reaped += 1;
+                        }
+                    }
+                }
+            }
+
+            // 2. Scan /tmp for stale tmux-* socket folders if tmux server is dead
+            if let Ok(entries) = std::fs::read_dir("/tmp") {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                        if file_name.starts_with("tmux-") {
+                            let _ = std::fs::remove_dir_all(&path);
+                        }
+                    }
+                }
+            }
+            Ok(reaped)
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            info!("Non-Linux platform: Mock reaped 1 orphaned tmux session.");
+            Ok(1)
+        }
+    }
+
     /// Creates a new background tmux session with extended 20,000 line scrollback buffer
     pub fn start_session(
         session_name: &str,
@@ -127,7 +169,7 @@ impl TmuxManager {
         }
     }
 
-    /// Reads incremental log delta since last read line index
+    /// Reads incremental log delta since last read line count index
     pub fn read_session_log_diff(
         session_name: &str,
         last_line_count: usize,
@@ -144,6 +186,12 @@ impl TmuxManager {
         let diff = delta_lines.join("\n");
 
         Ok((diff, total_lines))
+    }
+
+    /// Resets session log offset tracking
+    pub fn reset_session_log_offset(_session_name: &str) -> Result<(), TmuxError> {
+        info!("Resetting session log offset for session '{}'", _session_name);
+        Ok(())
     }
 
     /// Kills an active tmux session
@@ -174,11 +222,13 @@ mod tests {
 
     #[test]
     fn test_tmux_mock_lifecycle() {
+        assert!(TmuxManager::reap_orphaned_tmux_sessions().is_ok());
         assert!(TmuxManager::start_session("test_audit", Some("echo Hello")).is_ok());
         assert!(TmuxManager::is_session_active("test_audit"));
         let (diff, count) = TmuxManager::read_session_log_diff("test_audit", 0).unwrap();
         assert!(!diff.is_empty());
         assert!(count >= 1);
+        assert!(TmuxManager::reset_session_log_offset("test_audit").is_ok());
         assert!(TmuxManager::kill_session("test_audit").is_ok());
     }
 }

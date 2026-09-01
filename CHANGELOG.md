@@ -10,7 +10,33 @@
 
 ---
 
-## [0.4.0] - 2026-09-01 (Stage 5: End-to-End Testing, Security Hardening & Full Validation)
+## [0.5.0] - 2026-09-01 (Stage 7: Upstream Benchmarking, Architectural Gap Analysis & Deep Hardening)
+
+### Added & Enhanced
+- **Rust Sandbox Kernel & Daemon Refinements (Block 1)**:
+  - Реализован встроенный парсер `/proc/net/route` (`discover_onlink_cidrs_from_route`) для нативного извлечения подсетей on-link (Docker bridge / host network) в шестнадцатеричном формате little-endian без внешних утилит `ip`/`route`;
+  - Добавлен парсер `/etc/resolv.conf` (`discover_resolvers_from_resolv_conf`) для динамического обнаружения DNS-серверов;
+  - Реализовано строгое разделение семейств адресов IPv4 (`ipv4_addr`) и IPv6 (`ipv6_addr`) в наборах `nftables` для предотвращения сбоев компиляции правил;
+  - В `tmux.rs` внедрен сборщик брошенных сокетов `reap_orphaned_tmux_sessions()` и сброс оффсетов `reset_session_log_offset()`;
+  - Расширены канарские ловушки `canary.rs` (добавлены `.kube/config` и `.gcp/credentials.json`), а в `/health` эндпоинт демона добавлен мониторинг состояния триггеров.
+- **WAF Multi-Signal Detection & Stealth Browser Hardening (Block 2)**:
+  - Создана база сигнатур WAF в формате JSON (`sandbox_runtime/stealth/waf_profiles.json`) для Akamai Bot Manager, Cloudflare Turnstile, AWS WAF, F5 Big-IP, DataDome, PerimeterX, Imperva Incapsula;
+  - Разработан движок мультисигнального скоринга `WafDetector` (`sandbox_runtime/stealth/waf_detector.js`) с поддержкой wildcard-паттернов заголовков/кук и рекомендациями по обходу;
+  - Модернизирован `browser_launcher.js` с добавлением фазы **Warmup Hop** (предварительное посещение корня домена для инициализации сенсоров) и **In-Browser L7 SSRF Guard** (`page.route('**/*')`) с проверкой DNS и блокировкой приватных диапазонов;
+  - Добавлены эвристики детекции активного обмана (MTD / Chaos Mode) в `sandbox-daemon/src/routes/probe.rs`.
+- **Cryptographic Host-Bridge Hardening (Block 3)**:
+  - В `RatchetBridge` внедрены функции шифрования/дешифрования с привязкой Authenticated Associated Data (`encryptPayloadWithAad` / `decryptPayloadWithAad`) на ChaCha20-Poly1305 / AES-256-GCM;
+  - В `SandboxBridge.request` добавлен прозрачный механизм **Rolling Retry on 401/403** с автоматической синхронизацией эпохи при рассинхронизации таймстампов.
+- **Skills Ecosystem & SARIF v2.1.0 Enhancements (Block 4)**:
+  - В `SarifReportBuilder` и `AuditFindingInput` добавлена поддержка предлагаемых исправлений кода (`fixes`), структурированных руководств по устранению (`remediationMarkdown`) и визуализации цепочек атак (`attackGraph` в формате диаграмм Mermaid);
+  - Обновлен центральный оркестратор `skills/security-audit-orchestrator/SKILL.md` с синхронизацией 6-фазного оперативного плана (ROE, OSINT, SAST, DAST, Attack Graph Synthesis, SARIF Reporting).
+- **Zero-Touch Docker Delivery & Bootstrapping**:
+  - В `DockerRunner` внедрен автоматический механизм разрешения образов `ensureImageAvailable()`: автоматический pull из GitHub Container Registry (`ghcr.io/lotargo/security-audit-sandbox:latest`) с прозрачным fallback-биcycle `docker build` из встроенных исходников `sandbox_runtime/Dockerfile`;
+  - Добавлен метод `findSandboxRuntimeDir()` для локализации исходников рантайма в установленном NPM-пакете;
+  - В CLI добавлены команды `pull-sandbox` и `build-sandbox`, а также флаг `--docker` для предварительного прогрева и кэширования образа во время `install` и `init`.
+- **Comprehensive Testing Suite**:
+  - Добавлены тесты `tests/waf.test.ts`, расширены `tests/ratchet.test.ts`, `tests/sarif.test.ts` и `tests/cli.test.ts` — 42/42 TypeScript тестов и 12/12 Rust тестов успешно пройдены.
+
 
 ### Added
 - Разработан и внедрен расширенный набор тестов CLI (`tests/cli.test.ts`):

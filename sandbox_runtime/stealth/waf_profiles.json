@@ -1,0 +1,161 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "description": "Multi-signal WAF detection profiles ported from Decepticon & upgraded for Security Audit Plugin"
+  },
+  "akamai_bot_manager": {
+    "name": "Akamai Bot Manager",
+    "detectors": {
+      "cookie": ["_abck", "bm_sz", "ak_bmsc", "bm_sv", "bm_so"],
+      "header": ["x-akamai-*", "akamai-*"],
+      "server_contains": ["akamaighost", "akamai"],
+      "body": ["sec-if-cpt-container", "powered and protected by akamai", "akamai bot manager"]
+    },
+    "confidence_rules": {
+      "strong": 2,
+      "weak": 1
+    },
+    "capabilities_needed": ["needs_real_tls_stack", "needs_js_exec"],
+    "evasion_strategy": {
+      "tls_impersonate": ["chrome146", "safari17_0"],
+      "referer": "self_root",
+      "warmup_required": true,
+      "recommendation": "Use persistent browser context with initial root domain warmup hop to clear sensor cookies."
+    }
+  },
+  "cloudflare_turnstile": {
+    "name": "Cloudflare Turnstile & Bot Management",
+    "detectors": {
+      "cookie": ["cf_clearance", "__cf_bm", "__cfduid"],
+      "header": ["cf-ray", "cf-cache-status", "cf-mitigated"],
+      "server_contains": ["cloudflare"],
+      "body": ["just a moment...", "checking your browser", "cf-chl-bypass", "attention required! | cloudflare", "turnstile"]
+    },
+    "confidence_rules": {
+      "strong": 2,
+      "weak": 1
+    },
+    "capabilities_needed": ["needs_js_exec"],
+    "evasion_strategy": {
+      "tls_impersonate": ["chrome", "chrome_android"],
+      "referer": "google_search",
+      "warmup_required": true,
+      "recommendation": "Use stealth browser with Bezier mouse movements to solve interactive or managed Turnstile challenges."
+    }
+  },
+  "aws_waf": {
+    "name": "AWS WAF / CloudFront",
+    "detectors": {
+      "cookie": ["aws-waf-token"],
+      "header": ["x-amzn-requestid", "x-amzn-errortype", "x-amzn-waf-*", "x-amz-cf-id"],
+      "server_contains": ["awselb", "cloudfront"],
+      "body": ["aws waf", "request blocked by aws waf"]
+    },
+    "confidence_rules": {
+      "strong": 2,
+      "weak": 1
+    },
+    "capabilities_needed": ["needs_real_tls_stack"],
+    "evasion_strategy": {
+      "tls_impersonate": ["chrome", "safari"],
+      "referer": "self_root",
+      "warmup_required": false,
+      "recommendation": "Rotate TLS fingerprint and apply IP rotation or Tor circuit reset."
+    }
+  },
+  "f5_big_ip": {
+    "name": "F5 BIG-IP ASM / Advanced WAF",
+    "detectors": {
+      "cookie": ["bigipserver*", "ts01*", "f5_*"],
+      "header": ["x-cnection", "x-wa-info"],
+      "server_contains": ["big-ip"],
+      "body": ["the requested url was rejected", "please consult with your administrator", "support id:"]
+    },
+    "confidence_rules": {
+      "strong": 2,
+      "weak": 1
+    },
+    "capabilities_needed": ["needs_real_tls_stack"],
+    "evasion_strategy": {
+      "tls_impersonate": ["chrome", "safari"],
+      "referer": "self_root",
+      "warmup_required": false,
+      "recommendation": "Inspect TS01 cookie decoding and evaluate L7 IP header spoofing (X-Forwarded-For)."
+    }
+  },
+  "datadome": {
+    "name": "DataDome Bot Protection",
+    "detectors": {
+      "cookie": ["datadome"],
+      "header": ["x-datadome", "x-datadome-response"],
+      "server_contains": ["datadome"],
+      "body": ["datadome", "blocked by datadome", "geo.captcha-delivery.com"]
+    },
+    "confidence_rules": {
+      "strong": 2,
+      "weak": 1
+    },
+    "capabilities_needed": ["needs_real_tls_stack", "needs_js_exec"],
+    "evasion_strategy": {
+      "tls_impersonate": ["safari", "chrome"],
+      "referer": "self_root",
+      "warmup_required": true,
+      "recommendation": "High risk detection. Use real Chrome channel with stealth plugin and Tor IP rotation."
+    }
+  },
+  "perimeterx_human": {
+    "name": "PerimeterX / HUMAN Security",
+    "detectors": {
+      "cookie": ["_px3", "_pxhd", "_px2", "pxcts", "_pxvid"],
+      "header": ["x-px-*"],
+      "server_contains": ["perimeterx"],
+      "body": ["px-captcha", "press & hold to confirm you are a human", "client.perimeterx.net"]
+    },
+    "confidence_rules": {
+      "strong": 2,
+      "weak": 1
+    },
+    "capabilities_needed": ["needs_real_tls_stack", "needs_js_exec"],
+    "evasion_strategy": {
+      "tls_impersonate": ["safari", "chrome"],
+      "referer": "self_root",
+      "warmup_required": true,
+      "recommendation": "Use persistent browser context, Bezier human interaction curves and slow down probe rate."
+    }
+  },
+  "imperva_incapsula": {
+    "name": "Imperva / Incapsula",
+    "detectors": {
+      "cookie": ["incap_ses_*", "visid_incap_*", "nlbi_*"],
+      "header": ["x-iinfo", "x-cdn", "x-cdn-forward"],
+      "server_contains": ["incapsula"],
+      "body": ["incapsula incident id", "powered by incapsula"]
+    },
+    "confidence_rules": {
+      "strong": 2,
+      "weak": 1
+    },
+    "capabilities_needed": ["needs_real_tls_stack"],
+    "evasion_strategy": {
+      "tls_impersonate": ["chrome", "safari"],
+      "referer": "self_root",
+      "warmup_required": true,
+      "recommendation": "Preserve session cookies across probe requests and randomize User-Agent within Chrome family."
+    }
+  },
+  "unknown_challenge": {
+    "name": "Generic / Unknown Anti-Bot Challenge",
+    "detectors": {},
+    "confidence_rules": {
+      "strong": 0,
+      "weak": 0
+    },
+    "capabilities_needed": ["needs_js_exec"],
+    "evasion_strategy": {
+      "tls_impersonate": ["chrome", "safari", "firefox"],
+      "referer": "self_root",
+      "warmup_required": false,
+      "recommendation": "Fallback to stealth browser audit with human typing and delay simulation."
+    }
+  }
+}

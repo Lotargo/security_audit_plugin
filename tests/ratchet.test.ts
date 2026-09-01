@@ -72,4 +72,40 @@ describe('RatchetBridge Host Crypto & Signature Verification', () => {
 
     expect(isValid).toBe(false);
   });
+
+  it('encrypts and decrypts payloads with Authenticated Associated Data (AAD)', async () => {
+    const { encryptPayloadWithAad, decryptPayloadWithAad } = await import(
+      '../src/mcp/security/ratchet_bridge.js'
+    );
+    const crypto = await import('node:crypto');
+
+    const key = crypto.randomBytes(32);
+    const plaintext = JSON.stringify({ secret_token: 'SuperSecret123', target: 'https://example.com' });
+    const aad = 'host_mcp:POST:/execute:1725150000';
+
+    const envelope = encryptPayloadWithAad(plaintext, key, aad);
+    expect(envelope.ciphertext).toBeDefined();
+    expect(envelope.nonce).toHaveLength(24); // 12 bytes = 24 hex
+    expect(envelope.tag).toHaveLength(32); // 16 bytes = 32 hex
+
+    const decrypted = decryptPayloadWithAad(
+      envelope.ciphertext,
+      envelope.nonce,
+      envelope.tag,
+      key,
+      aad
+    );
+    expect(decrypted.toString('utf-8')).toBe(plaintext);
+
+    // Tampered AAD must fail decryption
+    expect(() => {
+      decryptPayloadWithAad(
+        envelope.ciphertext,
+        envelope.nonce,
+        envelope.tag,
+        key,
+        'tampered_aad_wrong_endpoint'
+      );
+    }).toThrow();
+  });
 });

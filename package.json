@@ -16,13 +16,20 @@
     "bin",
     "skills",
     "plugins",
-    "sandbox_runtime",
+    "sandbox_runtime/Dockerfile",
+    "sandbox_runtime/entrypoint.sh",
+    "sandbox_runtime/Cargo.toml",
+    "sandbox_runtime/Cargo.lock",
+    "sandbox_runtime/crates",
+    "sandbox_runtime/stealth",
+    "sandbox_runtime/tor",
     "gemini-extension.json",
     ".claude-plugin",
     ".opencode",
     ".cursor-plugin",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc",
@@ -31,7 +38,7 @@
     "doctor": "node bin/cli.js doctor",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

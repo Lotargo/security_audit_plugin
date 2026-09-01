@@ -1,0 +1,10 @@
+# ==============================================================================
+# Docker Ignore: sandbox_runtime
+# ==============================================================================
+
+target/
+stealth/node_modules/
+stealth/package-lock.json
+*.log
+.DS_Store
+Thumbs.db

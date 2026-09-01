@@ -12,12 +12,18 @@
 
 # Planning & Internal Documentation
 plan/
+plans/
 IMPLEMENTATION_PLAN.md
 
-# Rust Source & Build Cache (Rust daemon is compiled into Docker image)
-sandbox_runtime/crates/
+# Host TypeScript Source (Compiled to dist/)
+src/
+*.tsbuildinfo
+
+# Rust Target Build Cache & Stealth Node Modules
+target/
 sandbox_runtime/target/
-sandbox_runtime/Cargo.lock
+sandbox_runtime/stealth/node_modules/
+sandbox_runtime/stealth/package-lock.json
 
 # Test Suites & Benchmarks
 tests/

@@ -76,4 +76,57 @@ describe('SarifReportBuilder OASIS SARIF v2.1.0 Generator', () => {
     expect(md).toContain('CVSS v3.1: **8.2**');
     expect(md).toContain('CWE-79');
   });
+
+  it('correctly builds fixes, remediation guide, and attack graph visualizations', () => {
+    const builder = new SarifReportBuilder();
+    builder.addFinding({
+      ruleId: 'SEC-RCE-001',
+      ruleName: 'Remote Code Execution via Command Injection',
+      level: 'error',
+      message: 'Unsanitized input passed to child_process.exec()',
+      filePath: 'src/utils/backup.ts',
+      startLine: 20,
+      endLine: 20,
+      snippet: 'exec(`tar -czf ${req.body.filename} /data`);',
+      cvssScore: 9.8,
+      cwe: ['CWE-78'],
+      remediationMarkdown: 'Replace `child_process.exec` with `execFile` or `spawn` using an array of arguments.',
+      fixes: [
+        {
+          description: 'Use execFile with argument array instead of shell concatenation',
+          file: 'src/utils/backup.ts',
+          startLine: 20,
+          endLine: 20,
+          replacement: 'execFile("tar", ["-czf", req.body.filename, "/data"]);',
+        },
+      ],
+      attackGraph: {
+        nodes: [
+          { id: 'Attacker', label: 'External Attacker' },
+          { id: 'API', label: 'POST /api/backup Endpoint' },
+          { id: 'Shell', label: 'Linux Shell / Subprocess' },
+          { id: 'Host', label: 'Underlying Host Infrastructure' },
+        ],
+        edges: [
+          { from: 'Attacker', to: 'API', label: 'malicious payload in filename' },
+          { from: 'API', to: 'Shell', label: 'command concatenation' },
+          { from: 'Shell', to: 'Host', label: 'arbitrary code execution' },
+        ],
+      },
+    });
+
+    const sarif = builder.build();
+    const result = sarif.runs[0].results[0];
+    expect(result.fixes).toBeDefined();
+    expect(result.fixes?.[0].description.text).toContain('execFile');
+    expect(result.fixes?.[0].changes?.[0].replacements[0].insertedContent?.text).toContain('execFile("tar"');
+
+    const md = builder.exportMarkdownSummary();
+    expect(md).toContain('**Attack Vector & Blast Radius Graph**:');
+    expect(md).toContain('flowchart LR');
+    expect(md).toContain('Attacker["External Attacker"]');
+    expect(md).toContain('**Suggested Fix**:');
+    expect(md).toContain('execFile("tar"');
+    expect(md).toContain('**Remediation Guide**:');
+  });
 });

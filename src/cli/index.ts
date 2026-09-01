@@ -3,7 +3,13 @@ import { createMcpServer } from '../mcp/server.js';
 import { runDoctor } from './commands/doctor.js';
 import { runInstallSkills } from './commands/install_skills.js';
 import { runUninstallSkills } from './commands/uninstall_skills.js';
-import { startSandboxCmd, stopSandboxCmd, resetSandboxCmd } from './commands/sandbox_cmd.js';
+import {
+  startSandboxCmd,
+  stopSandboxCmd,
+  resetSandboxCmd,
+  pullSandboxCmd,
+  buildSandboxCmd,
+} from './commands/sandbox_cmd.js';
 
 export function createCli(): Command {
   const program = new Command();
@@ -49,6 +55,7 @@ export function createCli(): Command {
     .option('-s, --skills <skills>', 'Comma-separated skill names or "all" (default: all)')
     .option('-p, --path <path>', 'Custom directory path (used when target is "custom")')
     .option('--mcp', 'Print MCP server configuration snippet for target environment')
+    .option('--docker', 'Pre-warm / pull the sandbox Docker image during installation', false)
     .action(async (options) => {
       try {
         await runInstallSkills({
@@ -56,6 +63,7 @@ export function createCli(): Command {
           path: options.path,
           skills: options.skills,
           mcp: options.mcp,
+          docker: options.docker,
         });
       } catch (err: any) {
         console.error(`Error installing skills: ${err.message}`);
@@ -97,6 +105,7 @@ export function createCli(): Command {
     .option('-t, --target <target>', 'Target platform', 'local-agents')
     .option('-s, --skills <skills>', 'Comma-separated skill names or "all"', 'all')
     .option('--mcp', 'Include MCP configuration snippet', true)
+    .option('--docker', 'Pre-warm / pull the sandbox Docker image during setup', true)
     .action(async (options) => {
       console.log('\n--- Initializing Security Audit Plugin Setup ---\n');
       const doctorOk = await runDoctor();
@@ -107,6 +116,7 @@ export function createCli(): Command {
         target: options.target,
         skills: options.skills,
         mcp: options.mcp,
+        docker: options.docker,
       });
     });
 
@@ -125,6 +135,18 @@ export function createCli(): Command {
     .command('reset-sandbox')
     .description('Emergency Hard Reset: destroy and recreate a pristine sandbox container')
     .action(resetSandboxCmd);
+
+  program
+    .command('pull-sandbox')
+    .description('Pull pre-built sandbox image from public registry (GHCR)')
+    .option('-i, --image <name>', 'Registry image name')
+    .action(pullSandboxCmd);
+
+  program
+    .command('build-sandbox')
+    .description('Build sandbox container image locally from bundled sandbox_runtime')
+    .option('-p, --path <path>', 'Custom path to sandbox_runtime directory')
+    .action(buildSandboxCmd);
 
   return program;
 }

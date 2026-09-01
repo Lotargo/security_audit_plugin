@@ -82,66 +82,90 @@ export class SandboxBridge {
   }
 
   /**
-   * Dispatches signed HTTP request to sandbox daemon
+   * Dispatches signed HTTP request to sandbox daemon with transparent rolling retry on 401/403
    */
   public async request<T = any>(
     method: 'GET' | 'POST',
     apiPath: string,
-    bodyObj?: any
+    bodyObj?: any,
+    retryCount: number = 1
   ): Promise<T> {
     const bodyStr = bodyObj ? JSON.stringify(bodyObj) : '';
     const { headers, rawBody } = this.ratchet.signRequest(method, apiPath, bodyStr);
 
-    return new Promise<T>((resolve, reject) => {
-      const parsedUrl = new URL(this.baseUrl + apiPath);
-      const req = http.request(
-        {
-          hostname: parsedUrl.hostname,
-          port: parsedUrl.port,
-          path: parsedUrl.pathname + parsedUrl.search,
-          method,
-          headers: {
-            ...headers,
-            'content-length': rawBody.length.toString(),
+    const executeOnce = (): Promise<{ statusCode: number; data: string }> => {
+      return new Promise((resolve, reject) => {
+        const parsedUrl = new URL(this.baseUrl + apiPath);
+        const req = http.request(
+          {
+            hostname: parsedUrl.hostname,
+            port: parsedUrl.port,
+            path: parsedUrl.pathname + parsedUrl.search,
+            method,
+            headers: {
+              ...headers,
+              'content-length': rawBody.length.toString(),
+            },
+            timeout: 60000,
           },
-          timeout: 60000,
-        },
-        (res) => {
-          let responseData = '';
-          res.on('data', (chunk) => {
-            responseData += chunk;
-          });
-          res.on('end', () => {
-            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-              try {
-                const parsed = JSON.parse(responseData);
-                resolve(parsed as T);
-              } catch {
-                resolve(responseData as any);
-              }
-            } else {
-              try {
-                const errObj = JSON.parse(responseData);
-                reject(new Error(errObj.error || `HTTP ${res.statusCode}: ${responseData}`));
-              } catch {
-                reject(new Error(`HTTP ${res.statusCode}: ${responseData}`));
-              }
-            }
-          });
+          (res) => {
+            let responseData = '';
+            res.on('data', (chunk) => {
+              responseData += chunk;
+            });
+            res.on('end', () => {
+              resolve({ statusCode: res.statusCode || 500, data: responseData });
+            });
+          }
+        );
+
+        req.on('error', (err) => reject(new Error(`Sandbox daemon unreachable: ${err.message}`)));
+        req.on('timeout', () => {
+          req.destroy();
+          reject(new Error('Sandbox request timed out'));
+        });
+
+        if (rawBody.length > 0) {
+          req.write(rawBody);
         }
-      );
-
-      req.on('error', (err) => reject(new Error(`Sandbox daemon unreachable: ${err.message}`)));
-      req.on('timeout', () => {
-        req.destroy();
-        reject(new Error('Sandbox request timed out'));
+        req.end();
       });
+    };
 
-      if (rawBody.length > 0) {
-        req.write(rawBody);
+    try {
+      const { statusCode, data } = await executeOnce();
+
+      if (statusCode >= 200 && statusCode < 300) {
+        try {
+          return JSON.parse(data) as T;
+        } catch {
+          return data as any;
+        }
       }
-      req.end();
-    });
+
+      // If epoch drifted or authentication failed (401/403), perform transparent rolling retry with fresh epoch
+      if ((statusCode === 401 || statusCode === 403) && retryCount > 0) {
+        // Sleep 150ms and retry with fresh epoch
+        await new Promise((r) => setTimeout(r, 150));
+        return this.request<T>(method, apiPath, bodyObj, retryCount - 1);
+      }
+
+      try {
+        const errObj = JSON.parse(data);
+        throw new Error(errObj.error || `HTTP ${statusCode}: ${data}`);
+      } catch (parseErr: any) {
+        if (parseErr.message && !parseErr.message.startsWith('HTTP')) {
+          throw parseErr;
+        }
+        throw new Error(`HTTP ${statusCode}: ${data}`);
+      }
+    } catch (err: any) {
+      if (retryCount > 0 && err.message && (err.message.includes('401') || err.message.includes('403'))) {
+        await new Promise((r) => setTimeout(r, 150));
+        return this.request<T>(method, apiPath, bodyObj, retryCount - 1);
+      }
+      throw err;
+    }
   }
 
   /**

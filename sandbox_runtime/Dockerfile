@@ -74,7 +74,7 @@ RUN mkdir -p /var/lib/tor && chown -R root:root /var/lib/tor
 WORKDIR /opt/stealth
 COPY stealth/package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
-COPY stealth/*.js ./
+COPY stealth/*.js stealth/waf_profiles.json ./
 
 # 4. Copy compiled Rust daemon binary from builder
 COPY --from=builder /usr/src/app/target/release/sandbox-daemon /usr/local/bin/sandbox-daemon

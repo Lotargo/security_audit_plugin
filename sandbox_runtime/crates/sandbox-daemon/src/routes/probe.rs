@@ -22,6 +22,9 @@ pub struct ProbeResponse {
     pub headers: HashMap<String, String>,
     pub body: String,
     pub elapsed_ms: u64,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub waf_hints: Vec<String>,
+    pub potential_deception_detected: bool,
 }
 
 pub async fn handle_http_probe(
@@ -122,11 +125,42 @@ pub async fn handle_http_probe(
     }
 
     let body = response.text().await.unwrap_or_default();
+    let body_lower = body.to_lowercase();
+
+    // Check for WAF hints
+    let mut waf_hints = Vec::new();
+    for (k, _) in &resp_headers {
+        let k_lower = k.to_lowercase();
+        if k_lower.starts_with("cf-") {
+            waf_hints.push("Cloudflare".to_string());
+        } else if k_lower.starts_with("x-akamai") || k_lower.starts_with("akamai") {
+            waf_hints.push("Akamai".to_string());
+        } else if k_lower.starts_with("x-amzn-waf") {
+            waf_hints.push("AWS-WAF".to_string());
+        } else if k_lower.starts_with("x-datadome") {
+            waf_hints.push("DataDome".to_string());
+        } else if k_lower.starts_with("x-px") {
+            waf_hints.push("PerimeterX".to_string());
+        }
+    }
+    waf_hints.dedup();
+
+    // Heuristic for Chaos Mode / MTD deceptive status codes
+    let potential_deception = match status {
+        404 | 503 | 500 | 403 => {
+            // If body has valid non-error payload, substantial JSON or full HTML layout
+            (body.len() > 1000 && !body_lower.contains("not found") && !body_lower.contains("internal server error"))
+                || (body.starts_with('{') && body.contains("\"status\"") && !body_lower.contains("error"))
+        }
+        _ => false,
+    };
 
     Ok(Json(ProbeResponse {
         status,
         headers: resp_headers,
         body,
         elapsed_ms,
+        waf_hints,
+        potential_deception_detected: potential_deception,
     }))
 }

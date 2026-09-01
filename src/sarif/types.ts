@@ -160,5 +160,17 @@ export interface AuditFindingInput {
   owasp?: string[];
   mitre?: string[];
   remediation?: string;
+  remediationMarkdown?: string;
   tags?: string[];
+  fixes?: Array<{
+    description: string;
+    file: string;
+    startLine?: number;
+    endLine?: number;
+    replacement: string;
+  }>;
+  attackGraph?: {
+    nodes: Array<{ id: string; label: string; type?: string }>;
+    edges: Array<{ from: string; to: string; label?: string }>;
+  };
 }

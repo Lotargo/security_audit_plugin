@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
@@ -16,7 +16,7 @@ pub enum CanaryError {
     WatcherError(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CanaryTrap {
     pub file_path: PathBuf,
     pub trap_type: String,
@@ -26,6 +26,7 @@ pub struct CanaryTrap {
 pub struct CanaryManager {
     traps: Vec<CanaryTrap>,
     is_armed: Arc<AtomicBool>,
+    triggered_count: Arc<AtomicUsize>,
 }
 
 impl Default for CanaryManager {
@@ -39,6 +40,7 @@ impl CanaryManager {
         Self {
             traps: Vec::new(),
             is_armed: Arc::new(AtomicBool::new(false)),
+            triggered_count: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -91,6 +93,54 @@ STRIPE_API_KEY="sk_live_51CanaryDecoyKeyDoNotUseExfiltrationTrap"
             description: "Decoy production database and API credentials trap".to_string(),
         });
 
+        // 4. Kubernetes Config Honeypot
+        let kube_dir = base_dir.join(".kube");
+        fs::create_dir_all(&kube_dir).await?;
+        let kube_config = kube_dir.join("config");
+        let kube_content = r#"apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: https://k8s-prod.internal.cluster:6443
+    insecure-skip-tls-verify: true
+  name: prod-k8s
+contexts:
+- context:
+    cluster: prod-k8s
+    user: admin-canary
+  name: prod-cluster
+current-context: prod-cluster
+users:
+- name: admin-canary
+  user:
+    token: canary-k8s-service-account-token-do-not-use-exfil
+"#;
+        fs::write(&kube_config, kube_content).await?;
+        planted.push(CanaryTrap {
+            file_path: kube_config,
+            trap_type: "kube_config".to_string(),
+            description: "Decoy Kubernetes cluster admin configuration trap".to_string(),
+        });
+
+        // 5. Google Cloud Service Account Honeypot
+        let gcp_dir = base_dir.join(".gcp");
+        fs::create_dir_all(&gcp_dir).await?;
+        let gcp_creds = gcp_dir.join("credentials.json");
+        let gcp_content = r#"{
+  "type": "service_account",
+  "project_id": "corp-security-audit-prod",
+  "private_key_id": "canary9876543210abcdef",
+  "client_email": "sa-canary-trap@corp-security-audit-prod.iam.gserviceaccount.com",
+  "client_id": "123456789012345678901"
+}
+"#;
+        fs::write(&gcp_creds, gcp_content).await?;
+        planted.push(CanaryTrap {
+            file_path: gcp_creds,
+            trap_type: "gcp_credentials".to_string(),
+            description: "Decoy GCP IAM service account credential trap".to_string(),
+        });
+
         self.traps = planted.clone();
         self.is_armed.store(true, Ordering::SeqCst);
 
@@ -103,6 +153,7 @@ STRIPE_API_KEY="sk_live_51CanaryDecoyKeyDoNotUseExfiltrationTrap"
 
     fn spawn_watcher(&self, traps: Vec<CanaryTrap>) {
         let is_armed = self.is_armed.clone();
+        let triggered_count = self.triggered_count.clone();
 
         tokio::spawn(async move {
             info!("Canary inotify/access watcher loop started.");
@@ -132,6 +183,7 @@ STRIPE_API_KEY="sk_live_51CanaryDecoyKeyDoNotUseExfiltrationTrap"
                         };
 
                         if modified || accessed {
+                            triggered_count.fetch_add(1, Ordering::SeqCst);
                             error!("TRIPWIRE TRIGGERED! Unauthorized access or modification on canary: {:?}", path);
                             let _ =
                                 KillSwitch::trigger(&format!("Canary trap triggered: {:?}", path));
@@ -146,6 +198,10 @@ STRIPE_API_KEY="sk_live_51CanaryDecoyKeyDoNotUseExfiltrationTrap"
 
     pub fn is_armed(&self) -> bool {
         self.is_armed.load(Ordering::SeqCst)
+    }
+
+    pub fn triggered_count(&self) -> usize {
+        self.triggered_count.load(Ordering::SeqCst)
     }
 
     pub fn get_traps(&self) -> &[CanaryTrap] {
@@ -164,8 +220,9 @@ mod tests {
         let mut manager = CanaryManager::new();
 
         let traps = manager.arm_canaries(temp_dir.path()).await.unwrap();
-        assert_eq!(traps.len(), 3);
+        assert_eq!(traps.len(), 5);
         assert!(manager.is_armed());
+        assert_eq!(manager.triggered_count(), 0);
 
         for trap in &traps {
             assert!(trap.file_path.exists());
