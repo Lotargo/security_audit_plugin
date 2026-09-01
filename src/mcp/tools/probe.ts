@@ -2,20 +2,24 @@ import { z } from 'zod';
 import { SandboxBridge } from '../bridge.js';
 
 export const HttpProbeSchema = z.object({
-  url: z.string().url().describe('Target HTTP/HTTPS URL'),
-  method: z.string().optional().default('GET').describe('HTTP Method: GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH'),
-  headers: z
-    .record(z.string())
+  url: z.string().url().describe('In-scope HTTP/HTTPS URL'),
+  method: z
+    .string()
     .optional()
-    .describe('HTTP headers (including L7 IP spoofing: X-Forwarded-For, Client-IP, etc.)'),
-  body: z.string().optional().describe('HTTP Request body string'),
-  proxy: z.string().optional().describe('Proxy routing ("tor" or specific proxy URL)'),
+    .default('GET')
+    .describe('HTTP method: GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH'),
+  headers: z.record(z.string()).optional().describe('Custom HTTP request headers'),
+  body: z.string().optional().describe('HTTP request body string'),
+  proxy: z
+    .enum(['tor'])
+    .optional()
+    .describe('Use managed Tor routing when the active sandbox scope was configured with proxy="tor"'),
 });
 
 export function registerProbeTool(server: any, bridge: SandboxBridge) {
   server.tool(
     'sandbox_http_probe',
-    'Sends raw HTTP/HTTPS probe with custom headers, L7 IP spoofing, payload injection, and proxy tunneling.',
+    'Sends a scoped HTTP/HTTPS request with custom method, headers and body, enforcing the active RoE host list across redirects.',
     HttpProbeSchema.shape,
     async (args: z.infer<typeof HttpProbeSchema>) => {
       try {
