@@ -57,10 +57,17 @@ interface DaemonExecResult {
 interface ActiveNetworkScope {
   mode: 'local' | 'remote' | 'hybrid';
   targetHosts: string[];
-  proxy: string | null;
+  proxy: 'tor' | null;
 }
 
-const TOR_PROXY = 'socks5://127.0.0.1:9050';
+const TOR_BROWSER_PROXY = 'socks5://127.0.0.1:9050';
+const TOR_HTTP_PROXY = 'socks5h://127.0.0.1:9050';
+
+function normalizeProxyMode(proxy?: string): string | null {
+  if (!proxy) return null;
+  if (proxy === 'tor' || proxy === TOR_BROWSER_PROXY || proxy === TOR_HTTP_PROXY) return 'tor';
+  return proxy;
+}
 
 export class SandboxBridge {
   private ratchet: RatchetBridge;
@@ -188,8 +195,9 @@ export class SandboxBridge {
   }
 
   public async setScope(options: ScopeOptions): Promise<any> {
-    const enableTor = options.proxy === 'tor' || options.proxy === TOR_PROXY;
-    const proxyTarget = options.proxy && !enableTor ? options.proxy : undefined;
+    const proxyMode = normalizeProxyMode(options.proxy);
+    const enableTor = proxyMode === 'tor';
+    const proxyTarget = proxyMode && !enableTor ? proxyMode : undefined;
     const networkedMode = options.mode === 'remote' || options.mode === 'hybrid';
 
     if (proxyTarget) {
@@ -216,9 +224,8 @@ export class SandboxBridge {
     // Tor target names are intentionally NOT resolved on the host. This avoids local DNS leakage,
     // preserves .onion support, and prevents target IPs from being added to the agent's direct
     // nftables allowlist. Direct remote/hybrid scopes still pin DNS answers to explicit CIDRs.
-    const resolvedTargets = networkedMode && !enableTor
-      ? await resolveScopeTargets(options.targets || [])
-      : [];
+    const resolvedTargets =
+      networkedMode && !enableTor ? await resolveScopeTargets(options.targets || []) : [];
     const allowedCidrs = [...new Set([...resolvedTargets, ...explicitAllowed])].sort();
 
     if (networkedMode && allowedCidrs.length === 0 && !enableTor) {
@@ -239,7 +246,7 @@ export class SandboxBridge {
     this.activeNetworkScope = {
       mode: options.mode,
       targetHosts,
-      proxy: enableTor ? TOR_PROXY : null,
+      proxy: enableTor ? 'tor' : null,
     };
 
     if (options.arm_canaries) await this.armCanary();
@@ -247,7 +254,7 @@ export class SandboxBridge {
   }
 
   private prepareManagedNetworkCall(url: string, requestedProxy?: string): {
-    proxy: string | null;
+    useTor: boolean;
     allowedHosts: string[];
   } {
     if (this.activeNetworkScope.mode === 'local') {
@@ -259,22 +266,19 @@ export class SandboxBridge {
       throw new Error(`URL is outside the active audit scope: ${url}`);
     }
 
-    let normalizedRequestedProxy: string | null = null;
-    if (requestedProxy) {
-      normalizedRequestedProxy = requestedProxy === 'tor' ? TOR_PROXY : requestedProxy;
-      if (normalizedRequestedProxy !== scopedProxy) {
-        throw new Error('Per-call proxy does not match the active sandbox scope');
-      }
+    const requestedProxyMode = normalizeProxyMode(requestedProxy);
+    if (requestedProxyMode && requestedProxyMode !== scopedProxy) {
+      throw new Error('Per-call proxy does not match the active sandbox scope');
     }
 
     return {
-      proxy: normalizedRequestedProxy || scopedProxy,
+      useTor: scopedProxy === 'tor',
       allowedHosts: targetHosts,
     };
   }
 
   public async rotateTor(): Promise<{ status: string; message: string; exit_ip?: string }> {
-    if (this.activeNetworkScope.proxy !== TOR_PROXY) {
+    if (this.activeNetworkScope.proxy !== 'tor') {
       throw new Error('Tor rotation requires an active Tor-enabled scope');
     }
     return this.request('POST', '/rotate_tor', {});
@@ -330,7 +334,7 @@ export class SandboxBridge {
     const networkPolicy = this.prepareManagedNetworkCall(options.url, options.proxy);
     return this.request('POST', '/browser_audit', {
       ...options,
-      proxy: networkPolicy.proxy,
+      proxy: networkPolicy.useTor ? TOR_BROWSER_PROXY : null,
       allowed_hosts: networkPolicy.allowedHosts,
     });
   }
@@ -342,7 +346,7 @@ export class SandboxBridge {
       method: options.method || 'GET',
       headers: options.headers || {},
       body: options.body || '',
-      proxy: networkPolicy.proxy,
+      proxy: networkPolicy.useTor ? TOR_HTTP_PROXY : null,
       allowed_hosts: networkPolicy.allowedHosts,
     });
   }
