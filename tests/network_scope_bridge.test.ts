@@ -69,6 +69,17 @@ describe('SandboxBridge managed network scope', () => {
       'POST',
       '/http_probe',
       expect.objectContaining({
+        proxy: 'socks5h://127.0.0.1:9050',
+        allowed_hosts: ['203.0.113.7'],
+      })
+    );
+
+    request.mockClear();
+    await bridge.browserAudit({ url: 'https://203.0.113.7', proxy: 'tor' });
+    expect(request).toHaveBeenCalledWith(
+      'POST',
+      '/browser_audit',
+      expect.objectContaining({
         proxy: 'socks5://127.0.0.1:9050',
         allowed_hosts: ['203.0.113.7'],
       })
