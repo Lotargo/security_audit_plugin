@@ -3,7 +3,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { RatchetBridge } from './security/ratchet_bridge.js';
 import { JailGuard } from './security/jail.js';
-import { normalizeCidrList, resolveScopeTargets } from './security/scope_resolver.js';
+import {
+  isUrlInScope,
+  normalizeCidrList,
+  normalizeScopeHosts,
+  resolveScopeTargets,
+} from './security/scope_resolver.js';
 import { DockerRunner } from '../docker/runner.js';
 
 export interface ScopeOptions {
@@ -56,12 +61,25 @@ interface DaemonExecResult {
   log_file_path?: string | null;
 }
 
+interface ActiveNetworkScope {
+  mode: 'local' | 'remote' | 'hybrid';
+  targetHosts: string[];
+  proxy: string | null;
+}
+
+const TOR_PROXY = 'socks5://127.0.0.1:9050';
+
 export class SandboxBridge {
   private ratchet: RatchetBridge;
   private jail: JailGuard;
   private docker: DockerRunner;
   private hostPort: number;
   private baseUrl: string;
+  private activeNetworkScope: ActiveNetworkScope = {
+    mode: 'local',
+    targetHosts: [],
+    proxy: null,
+  };
 
   constructor(options?: {
     workspaceRoot?: string;
@@ -183,26 +201,32 @@ export class SandboxBridge {
       );
     }
 
-    const enableTor = options.proxy === 'tor' || options.proxy === 'socks5://127.0.0.1:9050';
+    const enableTor = options.proxy === 'tor' || options.proxy === TOR_PROXY;
     const proxyTarget = options.proxy && !enableTor ? options.proxy : undefined;
     const networkedMode = options.mode === 'remote' || options.mode === 'hybrid';
+
+    if (proxyTarget) {
+      throw new Error(
+        'External upstream proxy containment is not implemented safely yet; use direct scoped egress or proxy="tor"'
+      );
+    }
 
     const resolvedTargets = networkedMode
       ? await resolveScopeTargets(options.targets || [])
       : [];
     const explicitAllowed = normalizeCidrList(options.allowed_cidrs || [], 'allowed CIDR');
-    const proxyCidrs = networkedMode && proxyTarget
-      ? await resolveScopeTargets([proxyTarget])
-      : [];
-    const allowedCidrs = [...new Set([...resolvedTargets, ...explicitAllowed, ...proxyCidrs])].sort();
+    const allowedCidrs = [...new Set([...resolvedTargets, ...explicitAllowed])].sort();
     const deniedCidrs = options.denied_cidrs
       ? normalizeCidrList(options.denied_cidrs, 'denied CIDR')
       : undefined;
+    const targetHosts = networkedMode ? normalizeScopeHosts(options.targets || []) : [];
 
-    if (networkedMode && allowedCidrs.length === 0 && !enableTor && !proxyTarget) {
-      throw new Error(
-        'Remote/hybrid scope requires at least one target, allowed CIDR, Tor, or upstream proxy'
-      );
+    if (enableTor && targetHosts.length === 0) {
+      throw new Error('Tor scope requires at least one explicit domain, URL, or single-IP target');
+    }
+
+    if (networkedMode && allowedCidrs.length === 0 && !enableTor) {
+      throw new Error('Remote/hybrid scope requires at least one target or allowed CIDR');
     }
 
     const payload = {
@@ -211,16 +235,52 @@ export class SandboxBridge {
       allowed_cidrs: allowedCidrs,
       denied_cidrs: deniedCidrs,
       tor_enabled: enableTor,
-      proxy_enabled: Boolean(proxyTarget),
-      proxy_target: proxyTarget || null,
+      proxy_enabled: false,
+      proxy_target: null,
     };
 
     const egressRes = await this.request('POST', '/provision_egress', payload);
+    this.activeNetworkScope = {
+      mode: options.mode,
+      targetHosts,
+      proxy: enableTor ? TOR_PROXY : null,
+    };
+
     if (options.arm_canaries) await this.armCanary();
     return egressRes;
   }
 
+  private prepareManagedNetworkCall(url: string, requestedProxy?: string): {
+    proxy: string | null;
+    allowedHosts: string[];
+  } {
+    if (this.activeNetworkScope.mode === 'local') {
+      throw new Error('Managed network calls require an explicit remote or hybrid scope');
+    }
+
+    const { targetHosts, proxy: scopedProxy } = this.activeNetworkScope;
+    if (targetHosts.length > 0 && !isUrlInScope(url, targetHosts)) {
+      throw new Error(`URL is outside the active audit scope: ${url}`);
+    }
+
+    let normalizedRequestedProxy: string | null = null;
+    if (requestedProxy) {
+      normalizedRequestedProxy = requestedProxy === 'tor' ? TOR_PROXY : requestedProxy;
+      if (normalizedRequestedProxy !== scopedProxy) {
+        throw new Error('Per-call proxy does not match the active sandbox scope');
+      }
+    }
+
+    return {
+      proxy: normalizedRequestedProxy || scopedProxy,
+      allowedHosts: targetHosts,
+    };
+  }
+
   public async rotateTor(): Promise<{ status: string; message: string; exit_ip?: string }> {
+    if (this.activeNetworkScope.proxy !== TOR_PROXY) {
+      throw new Error('Tor rotation requires an active Tor-enabled scope');
+    }
     return this.request('POST', '/rotate_tor', {});
   }
 
@@ -271,10 +331,11 @@ export class SandboxBridge {
   }
 
   public async browserAudit(options: BrowserAuditOptions): Promise<any> {
-    const normalizedProxy = options.proxy === 'tor' ? 'socks5://127.0.0.1:9050' : options.proxy;
+    const networkPolicy = this.prepareManagedNetworkCall(options.url, options.proxy);
     return this.request('POST', '/browser_audit', {
       ...options,
-      proxy: normalizedProxy || null,
+      proxy: networkPolicy.proxy,
+      allowed_hosts: networkPolicy.allowedHosts,
     });
   }
 
@@ -285,17 +346,21 @@ export class SandboxBridge {
   }
 
   public async httpProbe(options: HttpProbeOptions): Promise<any> {
+    const networkPolicy = this.prepareManagedNetworkCall(options.url, options.proxy);
     return this.request('POST', '/http_probe', {
       url: options.url,
       method: options.method || 'GET',
       headers: options.headers || {},
       body: options.body || '',
-      proxy: options.proxy || null,
+      proxy: networkPolicy.proxy,
+      allowed_hosts: networkPolicy.allowedHosts,
     });
   }
 
   public async killSwitch(reason: string = 'Manual kill switch triggered'): Promise<any> {
-    return this.request('POST', '/emergency_isolate', { reason });
+    const result = await this.request('POST', '/emergency_isolate', { reason });
+    this.activeNetworkScope = { mode: 'local', targetHosts: [], proxy: null };
+    return result;
   }
 
   public async armCanary(tokenLabel: string = 'default_audit_canary'): Promise<any> {
@@ -328,6 +393,7 @@ export class SandboxBridge {
     } else {
       await this.killSwitch('Reset called');
     }
+    this.activeNetworkScope = { mode: 'local', targetHosts: [], proxy: null };
     return { status: 'ok', message: 'Sandbox instance cleanly reset' };
   }
 }
