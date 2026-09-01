@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { SandboxBridge } from '../bridge.js';
 
 export const BrowserAuditSchema = z.object({
-  url: z.string().url().describe('Target web application URL to audit'),
+  url: z.string().url().describe('In-scope target web application URL to audit'),
   auth_headers: z
     .record(z.string())
     .optional()
@@ -12,29 +12,29 @@ export const BrowserAuditSchema = z.object({
     .optional()
     .describe('Pre-authenticated cookies to inject into browser context'),
   proxy: z
-    .string()
+    .enum(['tor'])
     .optional()
-    .describe('Proxy endpoint ("tor", SOCKS5 or HTTP interceptor)'),
+    .describe('Use managed Tor routing when the active sandbox scope was configured with proxy="tor"'),
   bypass_turnstile: z
     .boolean()
     .optional()
     .default(true)
-    .describe('Enable Bezier curve mouse simulation and human typing for WAF bypass'),
+    .describe('Enable human-like cursor, delay, and scrolling behavior; this does not guarantee challenge bypass'),
   generate_decoy_noise: z
     .boolean()
     .optional()
     .default(false)
-    .describe('Inject synthetic background decoy traffic to obfuscate audit fingerprint'),
+    .describe('Generate synthetic background requests during the scoped browser audit'),
   spoof_headers: z
     .record(z.string())
     .optional()
-    .describe('L7 IP spoofing headers (X-Forwarded-For, CF-Connecting-IP)'),
+    .describe('Additional HTTP headers to send from the browser context'),
 });
 
 export function registerBrowserTool(server: any, bridge: SandboxBridge) {
   server.tool(
     'sandbox_browser_audit',
-    'Runs stealth Chromium session with Bezier curves, anti-fingerprinting, proxy support, HAR capture and DOM/cookie analysis.',
+    'Runs a scoped Chromium audit with anti-fingerprinting, human-like interaction, WAF heuristics, DOM/cookie analysis, and per-request RoE enforcement.',
     BrowserAuditSchema.shape,
     async (args: z.infer<typeof BrowserAuditSchema>) => {
       try {
