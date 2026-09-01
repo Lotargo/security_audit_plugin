@@ -54,6 +54,14 @@ describe('SandboxBridge managed network scope', () => {
       proxy: 'tor',
       arm_canaries: false,
     });
+    expect(request).toHaveBeenCalledWith(
+      'POST',
+      '/provision_egress',
+      expect.objectContaining({
+        tor_enabled: true,
+        allowed_cidrs: [],
+      })
+    );
     request.mockClear();
 
     await bridge.httpProbe({ url: 'https://203.0.113.7' });
@@ -69,6 +77,41 @@ describe('SandboxBridge managed network scope', () => {
     await expect(
       bridge.httpProbe({ url: 'https://203.0.113.7', proxy: 'http://proxy.invalid:8080' })
     ).rejects.toThrow('Per-call proxy does not match the active sandbox scope');
+  });
+
+  it('does not resolve Tor hostnames on the trusted host and preserves onion targets', async () => {
+    const { bridge, request } = mockedBridge();
+
+    await bridge.setScope({
+      mode: 'remote',
+      targets: ['http://examplehiddenservice.onion/'],
+      proxy: 'tor',
+      arm_canaries: false,
+    });
+
+    expect(request).toHaveBeenCalledWith(
+      'POST',
+      '/provision_egress',
+      expect.objectContaining({
+        targets: ['http://examplehiddenservice.onion/'],
+        allowed_cidrs: [],
+        tor_enabled: true,
+      })
+    );
+  });
+
+  it('rejects direct CIDR egress in Tor scopes', async () => {
+    const { bridge, request } = mockedBridge();
+
+    await expect(
+      bridge.setScope({
+        mode: 'remote',
+        targets: ['example.com'],
+        allowed_cidrs: ['203.0.113.0/24'],
+        proxy: 'tor',
+      })
+    ).rejects.toThrow('Tor scope cannot include allowed_cidrs');
+    expect(request).not.toHaveBeenCalled();
   });
 
   it('fails closed instead of exposing an uncontained external upstream proxy', async () => {
