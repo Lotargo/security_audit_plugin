@@ -10,24 +10,24 @@
 
 ---
 
-## [0.5.0] - 2026-09-01 (Stage 7: Upstream Benchmarking, Architectural Gap Analysis & Deep Hardening)
+## [0.5.0] - 2026-09-01
 
 ### Added & Enhanced
-- **Rust Sandbox Kernel & Daemon Refinements (Block 1)**:
+- **Rust Sandbox Kernel & Daemon Refinements**:
   - Реализован встроенный парсер `/proc/net/route` (`discover_onlink_cidrs_from_route`) для нативного извлечения подсетей on-link (Docker bridge / host network) в шестнадцатеричном формате little-endian без внешних утилит `ip`/`route`;
   - Добавлен парсер `/etc/resolv.conf` (`discover_resolvers_from_resolv_conf`) для динамического обнаружения DNS-серверов;
   - Реализовано строгое разделение семейств адресов IPv4 (`ipv4_addr`) и IPv6 (`ipv6_addr`) в наборах `nftables` для предотвращения сбоев компиляции правил;
   - В `tmux.rs` внедрен сборщик брошенных сокетов `reap_orphaned_tmux_sessions()` и сброс оффсетов `reset_session_log_offset()`;
   - Расширены канарские ловушки `canary.rs` (добавлены `.kube/config` и `.gcp/credentials.json`), а в `/health` эндпоинт демона добавлен мониторинг состояния триггеров.
-- **WAF Multi-Signal Detection & Stealth Browser Hardening (Block 2)**:
+- **WAF Multi-Signal Detection & Stealth Browser Hardening**:
   - Создана база сигнатур WAF в формате JSON (`sandbox_runtime/stealth/waf_profiles.json`) для Akamai Bot Manager, Cloudflare Turnstile, AWS WAF, F5 Big-IP, DataDome, PerimeterX, Imperva Incapsula;
   - Разработан движок мультисигнального скоринга `WafDetector` (`sandbox_runtime/stealth/waf_detector.js`) с поддержкой wildcard-паттернов заголовков/кук и рекомендациями по обходу;
   - Модернизирован `browser_launcher.js` с добавлением фазы **Warmup Hop** (предварительное посещение корня домена для инициализации сенсоров) и **In-Browser L7 SSRF Guard** (`page.route('**/*')`) с проверкой DNS и блокировкой приватных диапазонов;
   - Добавлены эвристики детекции активного обмана (MTD / Chaos Mode) в `sandbox-daemon/src/routes/probe.rs`.
-- **Cryptographic Host-Bridge Hardening (Block 3)**:
+- **Cryptographic Host-Bridge Hardening**:
   - В `RatchetBridge` внедрены функции шифрования/дешифрования с привязкой Authenticated Associated Data (`encryptPayloadWithAad` / `decryptPayloadWithAad`) на ChaCha20-Poly1305 / AES-256-GCM;
   - В `SandboxBridge.request` добавлен прозрачный механизм **Rolling Retry on 401/403** с автоматической синхронизацией эпохи при рассинхронизации таймстампов.
-- **Skills Ecosystem & SARIF v2.1.0 Enhancements (Block 4)**:
+- **Skills Ecosystem & SARIF v2.1.0 Enhancements**:
   - В `SarifReportBuilder` и `AuditFindingInput` добавлена поддержка предлагаемых исправлений кода (`fixes`), структурированных руководств по устранению (`remediationMarkdown`) и визуализации цепочек атак (`attackGraph` в формате диаграмм Mermaid);
   - Обновлен центральный оркестратор `skills/security-audit-orchestrator/SKILL.md` с синхронизацией 6-фазного оперативного плана (ROE, OSINT, SAST, DAST, Attack Graph Synthesis, SARIF Reporting).
 - **Zero-Touch Docker Delivery & Bootstrapping**:
@@ -35,8 +35,11 @@
   - Добавлен метод `findSandboxRuntimeDir()` для локализации исходников рантайма в установленном NPM-пакете;
   - В CLI добавлены команды `pull-sandbox` и `build-sandbox`, а также флаг `--docker` для предварительного прогрева и кэширования образа во время `install` и `init`.
 - **Comprehensive Testing Suite**:
-  - Добавлены тесты `tests/waf.test.ts`, расширены `tests/ratchet.test.ts`, `tests/sarif.test.ts` и `tests/cli.test.ts` — 42/42 TypeScript тестов и 12/12 Rust тестов успешно пройдены.
+  - Добавлены тесты `tests/waf.test.ts`, расширены `tests/ratchet.test.ts`, `tests/sarif.test.ts` и `tests/cli.test.ts`: 42/42 TypeScript тестов и 12/12 Rust тестов успешно пройдены.
 
+---
+
+## [0.4.0] - 2026-09-01
 
 ### Added
 - Разработан и внедрен расширенный набор тестов CLI (`tests/cli.test.ts`):
@@ -60,11 +63,10 @@
   - OpenCode (`.opencode/INSTALL.md`, `plugins/opencode/opencode.json`);
   - Gemini CLI (`gemini-extension.json`);
   - Cursor / Windsurf (`.cursor-plugin/plugin.json`).
-- Успешно пройдены 35/35 тестов TypeScript (Vitest) и 9/9 тестов Rust ядра (Cargo).
 
 ---
 
-## [0.3.0] - 2026-09-01 (Stage 3 & 4: TypeScript Host MCP Server, Ratchet Bridge, SARIF Builder, CLI & Manifests)
+## [0.3.0] - 2026-09-01
 
 ### Added
 - Инициализирован хостовый проект TypeScript (`package.json`, `tsconfig.json`) со строгой типизацией и сборкой в ESM.
@@ -92,14 +94,14 @@
 - Сгенерированы нативные манифесты плагина:
   - Google Antigravity (`plugins/agy/plugin.json`, `plugins/agy/mcp_config.json`);
   - OpenCode (`plugins/opencode/opencode.json`).
-- Разработан набор модульных тестов Vitest (`tests/jail.test.ts`, `tests/redaction.test.ts`, `tests/sarif.test.ts`, `tests/ratchet.test.ts`) — 19/19 тестов успешно пройдены.
+- Разработан набор модульных тестов Vitest (`tests/jail.test.ts`, `tests/redaction.test.ts`, `tests/sarif.test.ts`, `tests/ratchet.test.ts`): 19/19 тестов успешно пройдены.
 
 ### Changed
 - Синхронизирован алгоритм хеширования SHA-256 между Rust `sandbox-daemon` (`sha2::Sha256`) и Node.js `RatchetBridge` (`crypto.createHash('sha256')`).
 
 ---
 
-## [0.2.0] - 2026-09-01 (Stage 2: Docker Sandbox Runtime — Rust Kernel, Node.js Stealth Browser, Tor & Deception)
+## [0.2.0] - 2026-09-01
 
 ### Added
 - Создан Rust Workspace в `sandbox_runtime/Cargo.toml` с крейтами `sandbox-kernel` и `sandbox-daemon`.
@@ -122,7 +124,7 @@
 
 ---
 
-## [0.1.0] - 2026-09-01 (Stage 1: Skills Ecosystem Refactoring & Standardization)
+## [0.1.0] - 2026-09-01
 
 ### Added
 - Создана стандартизированная структура AgentSkills для всех 19 экспертных скиллов (`SKILL.md` + `references/` + `examples/` + `scripts/`).
@@ -133,45 +135,8 @@
 - Сформированы правила игнорирования `.gitignore`, `.npmignore` и `.dockerignore`.
 - Настроен слой CI/CD (`.github/workflows/ci.yml`, `.github/workflows/security.yml`) с автоматической валидацией скиллов, проверками Rust/TypeScript/Docker и сканированием секретов (Gitleaks).
 
-
 ### Changed
 - Отрефакторены и приведены к стандартам Progressive Disclosure 17 существующих скиллов с выделением тяжелых спецификаций в директории `references/`.
 
 ### Removed
 - Удалены 17 устаревших неструктурированных плоских файлов `skills/*.md`.
-
-
-<!-- 
-================================================================================
-ОБРАЗЕЦ / ШАБЛОН ДЛЯ ЗАПОЛНЕНИЯ (УДАЛИТЬ ПОСЛЕ ПЕРВОЙ РЕАЛЬНОЙ ЗАПИСИ РЕЛИЗА)
-================================================================================
-
-## [1.0.0] - 2026-09-01
-
-### Added (Добавлено)
-- Новые функции, скиллы, MCP-инструменты или модули ядра.
-- Пример: Добавлен MCP-инструмент `sandbox_rotate_tor_ip` для динамической ротации цепочек Tor.
-
-### Changed (Изменено)
-- Изменения в существующей функциональности, контрактах API или схемах скиллов.
-- Пример: Стек песочницы переведен с Python на Rust (Axum/Tokio) для изоляции памяти.
-
-### Deprecated (Устарело)
-- Функции, которые скоро будут удалены в следующих версиях.
-
-### Removed (Удалено)
-- Удаленные модули или устаревшие файлы.
-- Пример: Удалены неструктурированные markdown-файлы скиллов из корня папки `skills/`.
-
-### Fixed (Исправлено)
-- Любые исправления багов, уязвимостей или ошибок компиляции.
-- Пример: Устранена уязвимость Replay-атак в RatchetGuard путем проверки временных меток эпохи.
-
-### Security (Безопасность)
-- Улучшения в модели угроз, правилах файрвола или защите от эксплойтов.
-- Пример: Внедрен крейт `zeroize` для затирания приватных ключей в оперативной памяти.
-
-> [!NOTE]
-> **Инструкция**: Удалите этот закомментированный блок и образец версии [1.0.0] после фиксации первой релизной версии этапа.
-================================================================================
--->

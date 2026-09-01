@@ -167,6 +167,16 @@ Agent configuration snippet (mcp_config.json / claude_desktop_config.json):
 
 ---
 
+## Roadmap
+
+Detailed strategic milestones and future development tracks are documented in [ROADMAP.md](./ROADMAP.md):
+- Dedicated autonomous benchmark suite (security-audit-benchmarks);
+- Deep protocol fuzzing (gRPC, Protobuf, WebSockets);
+- Enterprise eBPF kernel telemetry and hardware-backed key attestation;
+- Continuous multi-model reasoning evaluation in CI pipelines.
+
+---
+
 ## Repository Structure
 
 - `skills/` - 19 standardized skills (instructions, examples, references).
@@ -175,4 +185,5 @@ Agent configuration snippet (mcp_config.json / claude_desktop_config.json):
 - `plugins/` - Integration manifests for AGY, OpenCode, Claude Code, Cursor.
 - `tests/` - Integration and unit test suite (Vitest).
 - `CHANGELOG.md` - Version history and changelog.
+- `ROADMAP.md` - Strategic milestones and future development roadmap.
 - `package.json` - NPM package configuration and dependencies.

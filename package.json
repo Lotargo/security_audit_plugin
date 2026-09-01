@@ -29,6 +29,7 @@
     ".cursor-plugin",
     "README.md",
     "CHANGELOG.md",
+    "ROADMAP.md",
     "LICENSE"
   ],
   "scripts": {
