@@ -6,7 +6,7 @@ export const SetScopeSchema = z.object({
   targets: z
     .array(z.string())
     .optional()
-    .describe('List of allowed target domains, IPs, or URLs for egress allowlist'),
+    .describe('Allowed target domains, IPs, CIDRs, or URLs. Domains/URLs are resolved on the trusted host and pinned to explicit IP CIDRs before nftables is provisioned.'),
   proxy: z
     .string()
     .optional()
@@ -23,11 +23,11 @@ export const SetScopeSchema = z.object({
   allowed_cidrs: z
     .array(z.string())
     .optional()
-    .describe('Explicit CIDRs to allow (overrides default allowlist)'),
+    .describe('Additional explicit IP/CIDR ranges to add to the egress allowlist. Unbounded /0 allowlists are rejected.'),
   denied_cidrs: z
     .array(z.string())
     .optional()
-    .describe('Explicit CIDRs to block (e.g. private subnets)'),
+    .describe('Explicit CIDRs to block. Deny rules take precedence over target/allowlist rules.'),
 });
 
 export function registerScopeTool(server: any, bridge: SandboxBridge) {
