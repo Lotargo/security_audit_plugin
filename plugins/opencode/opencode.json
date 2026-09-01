@@ -1,6 +1,6 @@
 {
   "plugin": "security-audit-plugin",
-  "version": "0.3.0",
+  "version": "0.6.0",
   "description": "Comprehensive Security Audit Plugin with isolated Docker sandbox, Rust kernel, stealth browser, Tor routing, and 19 standardized skills.",
   "skills_dir": "../../skills",
   "mcp": {

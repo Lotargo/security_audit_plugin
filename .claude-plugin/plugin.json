@@ -1,7 +1,7 @@
 {
   "name": "security-audit",
   "description": "Comprehensive Security Audit Plugin with isolated Docker sandbox, Rust kernel, stealth browser, Tor routing and 19 standardized skills.",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "author": {
     "name": "Lotargo & Antigravity"
   },
