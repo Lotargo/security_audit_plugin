@@ -1,0 +1,13 @@
+{
+  "name": "security-audit-marketplace",
+  "description": "Official marketplace for Security Audit Plugin and agent skills",
+  "version": "0.4.0",
+  "plugins": [
+    {
+      "name": "security-audit",
+      "description": "Comprehensive Security Audit Plugin with isolated Docker sandbox, Rust kernel, stealth browser, Tor routing and 19 standardized skills.",
+      "version": "0.4.0",
+      "source": "https://github.com/Lotargo/security_audit_plugin"
+    }
+  ]
+}

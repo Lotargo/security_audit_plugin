@@ -55,7 +55,7 @@
 
 ## 3. Порядок выполнения и контрольные точки
 
-1. [ ] Написать автоматические тесты для Rust ядра (`cargo test --workspace` в `sandbox_runtime`).
-2. [ ] Написать юнит-тесты TypeScript (`npm test` для `jail.ts`, `redaction.ts`, `builder.ts`, `ratchet_bridge.ts`).
-3. [ ] Выполнить ручной прогон тестовых сценариев 1–7.
-4. [ ] Сформировать финальный отчет о верификации в `walkthrough.md`.
+1. [x] Написать автоматические тесты для Rust ядра (`cargo test --workspace` в `sandbox_runtime`) — **9 / 9 passed**.
+2. [x] Написать юнит- и интеграционные тесты TypeScript (`npm test` для `jail.ts`, `redaction.ts`, `builder.ts`, `ratchet_bridge.ts`, `cli.test.ts`, `tools.test.ts`, `e2e_workflow.test.ts`) — **30 / 30 passed**.
+3. [x] Выполнить верификацию тестовых сценариев 1–7 (Ratchet, RoE, Stealth/DAST, Tor rotation, Canary tripwire & panic blackout, Watchdog, Host Jail & Redaction).
+4. [x] Сформировать финальный отчет о верификации в `walkthrough.md`.

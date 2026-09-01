@@ -38,6 +38,11 @@ export class SecretRedactor {
       regex: /(["']?(?:password|passwd|secret|api_key|token|access_token|client_secret)["']?\s*[:=]\s*["'])([^"'\s]{4,})(["'])/gi,
       replace: (_match, p1, p2, p3) => `${p1}${p2.substring(0, 2)}***${p2.substring(p2.length - 2)}${p3}`,
     },
+    // Database / HTTP Basic Auth Connection URI Credentials (proto://user:password@host)
+    {
+      regex: /([a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^/\s:@]+:)([^@\s/]{3,})(@)/g,
+      replace: (_match, p1, p2, p3) => `${p1}${p2.substring(0, 2)}***${p3}`,
+    },
   ];
 
   private static readonly SENSITIVE_HEADER_KEYS = new Set([

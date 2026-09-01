@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { createMcpServer } from '../mcp/server.js';
 import { runDoctor } from './commands/doctor.js';
 import { runInstallSkills } from './commands/install_skills.js';
+import { runUninstallSkills } from './commands/uninstall_skills.js';
 import { startSandboxCmd, stopSandboxCmd, resetSandboxCmd } from './commands/sandbox_cmd.js';
 
 export function createCli(): Command {
@@ -10,12 +11,12 @@ export function createCli(): Command {
   program
     .name('security-audit')
     .description('Security Audit Plugin: Isolated Docker Sandbox, Rust Kernel, Stealth Browser, Tor & 19 AgentSkills')
-    .version('0.3.0');
+    .version('0.4.0');
 
   // 1. MCP Server
   program
     .command('mcp')
-    .description('Launch MCP Server over STDIO for AI Agent integration (AGY, OpenCode, Codex, Claude)')
+    .description('Launch MCP Server over STDIO for AI Agent integration (AGY, OpenCode, Codex, Claude, Cursor)')
     .option('-w, --workspace <path>', 'Workspace directory path', process.cwd())
     .option('-p, --port <port>', 'Sandbox daemon port', '9999')
     .action(async (options) => {
@@ -35,26 +36,81 @@ export function createCli(): Command {
       process.exit(ok ? 0 : 1);
     });
 
-  // 3. Install Skills
+  // 3. Install Skills (with install / install-skills aliases)
   program
-    .command('install-skills')
-    .description('Install 19 standardized skills into the target agent environment')
+    .command('install')
+    .alias('install-skills')
+    .description('Install standardized skills into the target agent environment (AGY, Claude, OpenCode, local)')
     .option(
       '-t, --target <target>',
-      'Target platform: "agy", "opencode", "claude", "local-agents", or "custom"',
+      'Target platform: "agy", "opencode", "claude", "local-agents", "all", or "custom"',
       'local-agents'
     )
+    .option('-s, --skills <skills>', 'Comma-separated skill names or "all" (default: all)')
     .option('-p, --path <path>', 'Custom directory path (used when target is "custom")')
+    .option('--mcp', 'Print MCP server configuration snippet for target environment')
     .action(async (options) => {
       try {
-        await runInstallSkills({ target: options.target, path: options.path });
+        await runInstallSkills({
+          target: options.target,
+          path: options.path,
+          skills: options.skills,
+          mcp: options.mcp,
+        });
       } catch (err: any) {
         console.error(`Error installing skills: ${err.message}`);
         process.exit(1);
       }
     });
 
-  // 4. Sandbox Lifecycle
+  // 4. Uninstall Skills (with uninstall / uninstall-skills aliases)
+  program
+    .command('uninstall')
+    .alias('uninstall-skills')
+    .description('Uninstall skills from target agent environment')
+    .option(
+      '-t, --target <target>',
+      'Target platform: "agy", "opencode", "claude", "local-agents", "all", or "custom"',
+      'local-agents'
+    )
+    .option('-s, --skills <skills>', 'Comma-separated skill names to remove or "all" (default: all)')
+    .option('-p, --path <path>', 'Custom directory path (used when target is "custom")')
+    .option('--mcp', 'Print instructions for removing MCP server entry')
+    .action(async (options) => {
+      try {
+        await runUninstallSkills({
+          target: options.target,
+          path: options.path,
+          skills: options.skills,
+          mcp: options.mcp,
+        });
+      } catch (err: any) {
+        console.error(`Error uninstalling skills: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // 5. Init / Setup Wizard
+  program
+    .command('init')
+    .description('Interactive setup and installation for AI Agent environments')
+    .option('-t, --target <target>', 'Target platform', 'local-agents')
+    .option('-s, --skills <skills>', 'Comma-separated skill names or "all"', 'all')
+    .option('--mcp', 'Include MCP configuration snippet', true)
+    .action(async (options) => {
+      console.log('\n--- Initializing Security Audit Plugin Setup ---\n');
+      const doctorOk = await runDoctor();
+      if (!doctorOk) {
+        console.warn('\n[Warning] Some system checks failed. Continuing with skill installation...\n');
+      }
+      await runInstallSkills({
+        target: options.target,
+        skills: options.skills,
+        mcp: options.mcp,
+      });
+    });
+
+  // 6. Sandbox Lifecycle
   program
     .command('start-sandbox')
     .description('Start the isolated Docker sandbox container in background')

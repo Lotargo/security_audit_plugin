@@ -10,6 +10,34 @@
 
 ---
 
+## [0.4.0] - 2026-09-01 (Stage 5: End-to-End Testing, Security Hardening & Full Validation)
+
+### Added
+- Разработан и внедрен расширенный набор тестов CLI (`tests/cli.test.ts`):
+  - Проверка работы `doctor` (диагностика Docker, рантайма, доступности портов 9999, 9050, 9051 и структуры каталога скиллов);
+  - Проверка работы `install-skills` (установка всех 19 скиллов в целевые директории и валидация манифестов `SKILL.md`).
+- Разработан модульный тестовый слой для 12 MCP-инструментов (`tests/tools.test.ts`):
+  - Регистрация и валидация схем для `sandbox_set_scope`, `sandbox_rotate_tor_ip`, `sandbox_exec`, `sandbox_start_background`, `sandbox_poll_logs`, `sandbox_kill_switch`, `sandbox_reset`, `sandbox_fs_read`, `sandbox_fs_write`;
+  - Проверка прозрачной маршрутизации запросов через `SandboxBridge` и форматирования JSON-RPC ответов.
+- Реализован сквозной интеграционный тест полного цикла аудита (`tests/e2e_workflow.test.ts`):
+  - Сценарий задания гибридного скоупа с приманками;
+  - Запуск фонового сканирования и чтение дельта-логов через `tmux`;
+  - Генерация отчета OASIS SARIF v2.1.0 с CVSS v3.1 скорингом;
+  - Автоматическое маскирование секретов и учетных данных в URI (`postgres://admin:se***@host`);
+  - Валидация файловых операций в рабочей области через `JailGuard`;
+  - Срабатывание канарской ловушки и сетевой blackout через `sandbox_kill_switch`.
+- Реализован автономный package-relative резолв путей к каталогу `skills/` (`findSourceSkillsDir`) для бесшовной работы через `npx @security-audit/plugin` без необходимости клонирования репозитория.
+- Добавлены универсальные CLI-команды `install` (с флагами выборочной установки `--skills` и генерацией конфигурации `--mcp`), `init` (мастер настройки) и `uninstall` (чистое выборочное или полное удаление скиллов и очистка каталогов).
+- Созданы нативные манифесты совместимости для ведущих агентских экосистем:
+  - Google Antigravity (`plugins/agy/plugin.json`, `plugins/agy/mcp_config.json`);
+  - Claude Code (`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`);
+  - OpenCode (`.opencode/INSTALL.md`, `plugins/opencode/opencode.json`);
+  - Gemini CLI (`gemini-extension.json`);
+  - Cursor / Windsurf (`.cursor-plugin/plugin.json`).
+- Успешно пройдены 35/35 тестов TypeScript (Vitest) и 9/9 тестов Rust ядра (Cargo).
+
+---
+
 ## [0.3.0] - 2026-09-01 (Stage 3 & 4: TypeScript Host MCP Server, Ratchet Bridge, SARIF Builder, CLI & Manifests)
 
 ### Added

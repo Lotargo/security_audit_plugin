@@ -400,9 +400,19 @@ security_audit_plugin/
 - [x] Создать манифесты `plugins/agy/plugin.json`, `plugins/agy/mcp_config.json` и `plugins/opencode/opencode.json`.
 - [x] Настроить `package.json` и скрипты сборки.
 
-### [ ] [Этап 5: Сквозное тестирование и валидация безопасности](./plan/STAGE_5_TESTING_AND_VALIDATION.md)
+### [x] [Этап 5: Сквозное тестирование и валидация безопасности](./plan/STAGE_5_TESTING_AND_VALIDATION.md)
 *Детальный план: [`plan/STAGE_5_TESTING_AND_VALIDATION.md`](./plan/STAGE_5_TESTING_AND_VALIDATION.md)*
-- [ ] Запустить автоматические тесты (Rust `cargo test`, TS `npm test`).
-- [ ] Протестировать криптографический рэтчет (RatchetGuard, отсечение Replay-атак, `zeroize` память).
-- [ ] Прогнать сценарии локального SAST, удаленного DAST, стелс-браузера, ротации Tor, канарских ловушек и аварийного сброса.
-- [ ] Сформировать финальный отчет в `walkthrough.md`.
+- [x] Запустить автоматические тесты (Rust `cargo test` 9/9 passed, TS `npm test` 30/30 passed).
+- [x] Протестировать криптографический рэтчет (RatchetGuard, отсечение Replay-атак, `zeroize` память).
+- [x] Прогнать сценарии локального SAST, удаленного DAST, стелс-браузера, ротации Tor, канарских ловушек и аварийного сброса.
+- [x] Сформировать финальный отчет в `walkthrough.md`.
+
+### [x] [Этап 6: Zero-Setup Web/NPM Дистрибуция, Универсальные Манифесты, Инсталлер и Деинсталлятор](./plan/STAGE_6_NPM_DISTRIBUTION_AND_UNIVERSAL_INSTALLER.md)
+*Детальный план: [`plan/STAGE_6_NPM_DISTRIBUTION_AND_UNIVERSAL_INSTALLER.md`](./plan/STAGE_6_NPM_DISTRIBUTION_AND_UNIVERSAL_INSTALLER.md)*
+- [x] Обеспечить автономный package-relative резолв путей к `skills/` при выполнении из `npx` без локального репозитория.
+- [x] Реализовать универсальные команды `init`, `install` и `uninstall` с фильтрацией `--skills`, `--mcp` и поддержкой `--all`.
+- [x] Создать нативные манифесты: `gemini-extension.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.opencode/INSTALL.md`, `.cursor-plugin/plugin.json`.
+- [x] Добавить интеграционные тесты для удаленной, выборочной установки и удаления в `tests/cli.test.ts` (8/8 passed).
+- [x] Провести полную валидацию сборки и тестов (TS 35/35, Rust 9/9).
+
+

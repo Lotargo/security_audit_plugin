@@ -21,7 +21,7 @@ export async function createMcpServer(options: ServerOptions = {}): Promise<{
 
   const server = new McpServer({
     name: 'security-audit-sandbox',
-    version: '0.3.0',
+    version: '0.4.0',
   });
 
   const bridge = new SandboxBridge({

@@ -1,0 +1,21 @@
+{
+  "name": "security-audit",
+  "description": "Comprehensive Security Audit Plugin with isolated Docker sandbox, Rust kernel, stealth browser, Tor routing and 19 standardized skills.",
+  "version": "0.4.0",
+  "author": {
+    "name": "Lotargo & Antigravity"
+  },
+  "homepage": "https://github.com/Lotargo/security_audit_plugin",
+  "repository": "https://github.com/Lotargo/security_audit_plugin",
+  "license": "Apache-2.0",
+  "keywords": [
+    "security",
+    "audit",
+    "dast",
+    "sast",
+    "mcp",
+    "sandbox",
+    "tor",
+    "sarif"
+  ]
+}

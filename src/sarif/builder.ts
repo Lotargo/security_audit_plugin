@@ -14,7 +14,7 @@ import {
  */
 export class SarifReportBuilder {
   private toolName: string = 'security-audit-plugin';
-  private toolVersion: string = '0.3.0';
+  private toolVersion: string = '0.4.0';
   private toolUri: string = 'https://github.com/Lotargo/security_audit_plugin';
   private rules: Map<string, SarifRule> = new Map();
   private results: SarifResult[] = [];

@@ -1,0 +1,6 @@
+{
+  "name": "security-audit-plugin",
+  "description": "Comprehensive Security Audit Plugin with isolated Docker sandbox, Rust kernel, stealth browser, Tor routing and 19 standardized skills.",
+  "version": "0.4.0",
+  "contextFileName": "GEMINI.md"
+}
