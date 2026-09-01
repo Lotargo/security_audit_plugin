@@ -49,7 +49,7 @@ function isPrivateOrRestrictedIp(ipStr) {
   return false;
 }
 
-async function classifyUrl(urlStr, allowPrivate = false, allowedHosts = []) {
+async function classifyUrl(urlStr, allowPrivate = false, allowedHosts = [], resolveDns = true) {
   try {
     const parsed = new URL(urlStr);
     if (!['http:', 'https:'].includes(parsed.protocol)) {
@@ -63,10 +63,15 @@ async function classifyUrl(urlStr, allowPrivate = false, allowedHosts = []) {
 
     if (allowPrivate) return { ok: true, reason: 'allow_private' };
 
-    if (/^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host.includes(':')) {
-      if (isPrivateOrRestrictedIp(host)) {
-        return { ok: false, reason: `Direct private IP access blocked: ${host}` };
-      }
+    const literalIp = /^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host.includes(':');
+    if (literalIp && isPrivateOrRestrictedIp(host)) {
+      return { ok: false, reason: `Direct private IP access blocked: ${host}` };
+    }
+
+    // With a scoped SOCKS proxy the destination hostname must be resolved by the proxy itself.
+    // Local dns.lookup() here would leak the target and would also make .onion destinations fail.
+    if (!resolveDns) {
+      return { ok: true, reason: 'scoped_proxy_dns' };
     }
 
     try {
@@ -118,7 +123,13 @@ async function runAudit() {
   }
 
   const allowPrivate = config.allow_private === true;
-  const initialCheck = await classifyUrl(targetUrl, allowPrivate, allowedHosts);
+  const resolveDnsLocally = !proxyUrl;
+  const initialCheck = await classifyUrl(
+    targetUrl,
+    allowPrivate,
+    allowedHosts,
+    resolveDnsLocally
+  );
   if (!initialCheck.ok) {
     throw new Error(`Target blocked by scope/SSRF guard: ${initialCheck.reason}`);
   }
@@ -175,7 +186,7 @@ async function runAudit() {
 
   await page.route('**/*', async (route) => {
     const reqUrl = route.request().url();
-    const check = await classifyUrl(reqUrl, allowPrivate, allowedHosts);
+    const check = await classifyUrl(reqUrl, allowPrivate, allowedHosts, resolveDnsLocally);
     if (!check.ok) {
       console.error(`[RoE-Guard] Aborted forbidden destination: ${check.reason}`);
       await route.abort('blockedbyclient');
@@ -213,7 +224,12 @@ async function runAudit() {
         const urlObj = new URL(targetUrl);
         const rootUrl = `${urlObj.protocol}//${urlObj.host}/`;
         if (rootUrl !== targetUrl && rootUrl !== targetUrl + '/') {
-          const warmupCheck = await classifyUrl(rootUrl, allowPrivate, allowedHosts);
+          const warmupCheck = await classifyUrl(
+            rootUrl,
+            allowPrivate,
+            allowedHosts,
+            resolveDnsLocally
+          );
           if (warmupCheck.ok) {
             console.error(`[*] Performing Warmup Hop on site root: ${rootUrl}`);
             await page.goto(rootUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
