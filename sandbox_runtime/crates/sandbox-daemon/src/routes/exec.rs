@@ -3,10 +3,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
 use std::time::Duration;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
 
+use sandbox_kernel::audit_exec_identity;
 use sandbox_kernel::tmux::TmuxManager;
 use sandbox_kernel::watchdog::{process_command_output, WatchdogResult};
 
@@ -45,10 +48,7 @@ pub async fn handle_execute(
             .as_millis()
     );
 
-    info!(
-        "Executing command: '{}' in directory '{}'",
-        payload.command, work_dir
-    );
+    info!("Executing unprivileged audit command in '{}'", work_dir);
 
     #[cfg(target_os = "windows")]
     let mut cmd = {
@@ -61,6 +61,12 @@ pub async fn handle_execute(
     let mut cmd = {
         let mut c = Command::new("sh");
         c.args(["-c", &payload.command]);
+        let (uid, gid) = audit_exec_identity();
+        #[cfg(unix)]
+        {
+            c.as_std_mut().uid(uid).gid(gid);
+        }
+        c.env("HOME", "/tmp");
         c
     };
 
@@ -68,9 +74,7 @@ pub async fn handle_execute(
         cmd.current_dir(&work_dir);
     }
 
-    let execution_future = cmd.output();
-
-    let output = match timeout(timeout_duration, execution_future).await {
+    let output = match timeout(timeout_duration, cmd.output()).await {
         Ok(Ok(output)) => output,
         Ok(Err(e)) => {
             error!("Command execution failed: {}", e);
@@ -83,9 +87,7 @@ pub async fn handle_execute(
             warn!("Command execution timed out after {:?}", timeout_duration);
             return Err((
                 StatusCode::GATEWAY_TIMEOUT,
-                Json(
-                    json!({"error": format!("Command timed out after {}s", timeout_duration.as_secs())}),
-                ),
+                Json(json!({"error": format!("Command timed out after {}s", timeout_duration.as_secs())})),
             ));
         }
     };
@@ -93,7 +95,11 @@ pub async fn handle_execute(
     let exit_code = output.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined_raw = format!("{}{}", stdout, stderr);
+    let combined_raw = if stderr.is_empty() {
+        stdout.into_owned()
+    } else {
+        format!("{}\n[STDERR]\n{}", stdout, stderr)
+    };
 
     let log_dir = PathBuf::from(&work_dir).join("logs");
     let watchdog_res = process_command_output(&cmd_id, &combined_raw, &log_dir)
@@ -120,10 +126,7 @@ pub async fn handle_interactive_tmux(
     let session = payload
         .session
         .unwrap_or_else(|| "audit_session".to_string());
-    info!(
-        "Sending interactive input to tmux session '{}': {}",
-        session, payload.input
-    );
+    info!("Sending interactive input to tmux session '{}'", session);
 
     match TmuxManager::send_input(&session, &payload.input) {
         Ok(_) => Ok(Json(json!({"status": "success", "session": session}))),

@@ -39,6 +39,22 @@ export interface BundleExtractOptions {
   out_dir?: string;
 }
 
+export interface ExecResult {
+  exit_code: number;
+  stdout: string;
+  stderr: string;
+  truncated: boolean;
+  log_path?: string;
+}
+
+interface DaemonExecResult {
+  output: string;
+  exit_code: number;
+  is_truncated: boolean;
+  total_chars: number;
+  log_file_path?: string | null;
+}
+
 export class SandboxBridge {
   private ratchet: RatchetBridge;
   private jail: JailGuard;
@@ -172,7 +188,6 @@ export class SandboxBridge {
       mode: options.mode,
       targets: options.targets || [],
       allowed_cidrs: options.allowed_cidrs || [],
-      // Undefined is intentionally omitted so Rust applies its secure default private/metadata denylist.
       denied_cidrs: options.denied_cidrs,
       tor_enabled: enableTor,
       proxy_enabled: Boolean(proxyTarget),
@@ -188,11 +203,18 @@ export class SandboxBridge {
     return this.request('POST', '/rotate_tor', {});
   }
 
-  public async exec(
-    command: string,
-    timeoutSecs: number = 60
-  ): Promise<{ exit_code: number; stdout: string; stderr: string; truncated: boolean; log_path?: string }> {
-    return this.request('POST', '/execute', { command, timeout_secs: timeoutSecs });
+  public async exec(command: string, timeoutSecs: number = 60): Promise<ExecResult> {
+    const raw = await this.request<DaemonExecResult>('POST', '/execute', {
+      command,
+      timeout_secs: timeoutSecs,
+    });
+    return {
+      exit_code: raw.exit_code,
+      stdout: raw.output || '',
+      stderr: '',
+      truncated: raw.is_truncated,
+      log_path: raw.log_file_path || undefined,
+    };
   }
 
   public async interactiveInput(

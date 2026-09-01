@@ -4,6 +4,8 @@ use thiserror::Error;
 #[allow(unused_imports)]
 use tracing::{error, info, warn};
 
+use crate::privilege::audit_exec_identity;
+
 #[derive(Error, Debug)]
 pub enum TmuxError {
     #[error("Tmux execution failed: {0}")]
@@ -17,14 +19,12 @@ pub enum TmuxError {
 pub struct TmuxManager;
 
 impl TmuxManager {
-    /// Reaps orphaned tmux sockets and unmanaged sessions left behind by previous crashes or SIGKILL
     pub fn reap_orphaned_tmux_sessions() -> Result<usize, TmuxError> {
         info!("Reaping orphaned tmux sessions and cleaning up stale socket files...");
 
         #[cfg(target_os = "linux")]
         {
             let mut reaped = 0;
-            // 1. List active tmux sessions and kill lingering ones
             if let Ok(output) = Command::new("tmux")
                 .args(["list-sessions", "-F", "#{session_name}"])
                 .output()
@@ -43,7 +43,6 @@ impl TmuxManager {
                 }
             }
 
-            // 2. Scan /tmp for stale tmux-* socket folders if tmux server is dead
             if let Ok(entries) = std::fs::read_dir("/tmp") {
                 for entry in entries.flatten() {
                     let path = entry.path();
@@ -64,37 +63,52 @@ impl TmuxManager {
         }
     }
 
-    /// Creates a new background tmux session with extended 20,000 line scrollback buffer
+    /// Creates a root-owned tmux control session whose pane shell is explicitly demoted
+    /// to the audit UID/GID. The agent can interact with the pane, but cannot access the
+    /// root tmux control socket or inherit the daemon's NET_ADMIN capability.
     pub fn start_session(
         session_name: &str,
         initial_command: Option<&str>,
     ) -> Result<(), TmuxError> {
-        info!("Starting tmux session '{}'", session_name);
+        info!("Starting unprivileged tmux audit session '{}'", session_name);
 
         #[cfg(target_os = "linux")]
         {
-            // 1. Create detached session (best effort in container)
+            let (uid, gid) = audit_exec_identity();
+            let pane_shell = format!(
+                "exec setpriv --reuid={} --regid={} --clear-groups --no-new-privs -- sh",
+                uid, gid
+            );
+
             let status_res = Command::new("tmux")
-                .args(["new-session", "-d", "-s", session_name, "-n", "audit"])
+                .args([
+                    "new-session",
+                    "-d",
+                    "-s",
+                    session_name,
+                    "-n",
+                    "audit",
+                    &pane_shell,
+                ])
                 .status();
 
             if let Ok(status) = status_res {
-                if status.success() {
-                    // 2. Set scrollback buffer to 20,000 lines
-                    let _ = Command::new("tmux")
-                        .args(["set-option", "-t", session_name, "history-limit", "20000"])
-                        .status();
-
-                    // 3. Send initial command if provided
-                    if let Some(cmd) = initial_command {
-                        let _ = Self::send_input(session_name, cmd);
-                    }
+                if !status.success() {
+                    return Err(TmuxError::ExecutionFailed(format!(
+                        "tmux new-session exited with status {}",
+                        status
+                    )));
                 }
-            } else {
-                info!(
-                    "Non-Linux/CI environment: mock tmux session initialized: {:?}",
-                    initial_command
-                );
+
+                let _ = Command::new("tmux")
+                    .args(["set-option", "-t", session_name, "history-limit", "20000"])
+                    .status();
+
+                if let Some(cmd) = initial_command {
+                    Self::send_input(session_name, cmd)?;
+                }
+            } else if let Err(e) = status_res {
+                return Err(TmuxError::IoError(e));
             }
         }
 
@@ -110,13 +124,18 @@ impl TmuxManager {
         Ok(())
     }
 
-    /// Sends raw keyboard input or commands to an active tmux session
     pub fn send_input(session_name: &str, input: &str) -> Result<(), TmuxError> {
         #[cfg(target_os = "linux")]
         {
-            let _ = Command::new("tmux")
+            let status = Command::new("tmux")
                 .args(["send-keys", "-t", session_name, input, "C-m"])
-                .status();
+                .status()?;
+            if !status.success() {
+                return Err(TmuxError::ExecutionFailed(format!(
+                    "tmux send-keys exited with status {}",
+                    status
+                )));
+            }
         }
 
         #[cfg(not(target_os = "linux"))]
@@ -132,7 +151,6 @@ impl TmuxManager {
         Ok(())
     }
 
-    /// Checks if a tmux session is actively running
     pub fn is_session_active(session_name: &str) -> bool {
         #[cfg(target_os = "linux")]
         {
@@ -140,7 +158,7 @@ impl TmuxManager {
                 .args(["has-session", "-t", session_name])
                 .status()
                 .map(|s| s.success())
-                .unwrap_or(true)
+                .unwrap_or(false)
         }
 
         #[cfg(not(target_os = "linux"))]
@@ -150,20 +168,20 @@ impl TmuxManager {
         }
     }
 
-    /// Captures the full output of a tmux session pane
     pub fn capture_pane(session_name: &str, start_line: Option<i32>) -> Result<String, TmuxError> {
         #[cfg(target_os = "linux")]
         {
             let start = start_line.unwrap_or(-20000).to_string();
-            let output_res = Command::new("tmux")
+            let output = Command::new("tmux")
                 .args(["capture-pane", "-t", session_name, "-p", "-S", &start])
-                .output();
+                .output()?;
 
-            match output_res {
-                Ok(output) if output.status.success() => {
-                    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-                }
-                _ => Ok(format!("[Mock tmux output for session '{}']", session_name)),
+            if output.status.success() {
+                Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+            } else {
+                Err(TmuxError::ExecutionFailed(
+                    String::from_utf8_lossy(&output.stderr).into_owned(),
+                ))
             }
         }
 
@@ -174,7 +192,6 @@ impl TmuxManager {
         }
     }
 
-    /// Reads incremental log delta since last read line count index
     pub fn read_session_log_diff(
         session_name: &str,
         last_line_count: usize,
@@ -187,13 +204,9 @@ impl TmuxManager {
             return Ok((String::new(), total_lines));
         }
 
-        let delta_lines = &lines[last_line_count..];
-        let diff = delta_lines.join("\n");
-
-        Ok((diff, total_lines))
+        Ok((lines[last_line_count..].join("\n"), total_lines))
     }
 
-    /// Resets session log offset tracking
     pub fn reset_session_log_offset(_session_name: &str) -> Result<(), TmuxError> {
         info!(
             "Resetting session log offset for session '{}'",
@@ -202,13 +215,18 @@ impl TmuxManager {
         Ok(())
     }
 
-    /// Kills an active tmux session
     pub fn kill_session(session_name: &str) -> Result<(), TmuxError> {
         #[cfg(target_os = "linux")]
         {
-            let _ = Command::new("tmux")
+            let status = Command::new("tmux")
                 .args(["kill-session", "-t", session_name])
-                .status();
+                .status()?;
+            if !status.success() {
+                return Err(TmuxError::ExecutionFailed(format!(
+                    "tmux kill-session exited with status {}",
+                    status
+                )));
+            }
         }
 
         #[cfg(not(target_os = "linux"))]

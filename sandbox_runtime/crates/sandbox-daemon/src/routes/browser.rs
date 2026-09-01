@@ -2,9 +2,13 @@ use axum::{http::StatusCode, Json};
 use serde_json::Value;
 use std::process::Stdio;
 use std::time::Duration;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tracing::{error, info};
+
+use sandbox_kernel::audit_exec_identity;
 
 pub async fn handle_browser_audit(
     Json(config): Json<Value>,
@@ -16,21 +20,29 @@ pub async fn handle_browser_audit(
         )
     })?;
 
-    let mut child = Command::new("node")
+    let mut command = Command::new("node");
+    command
         .arg("/opt/stealth/browser_launcher.js")
         .arg("--stdin-json")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| {
-            error!("Failed to start browser launcher: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "Failed to start browser launcher"})),
-            )
-        })?;
+        .env("HOME", "/tmp");
+
+    #[cfg(unix)]
+    {
+        let (uid, gid) = audit_exec_identity();
+        command.as_std_mut().uid(uid).gid(gid);
+    }
+
+    let mut child = command.spawn().map_err(|e| {
+        error!("Failed to start browser launcher: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "Failed to start browser launcher"})),
+        )
+    })?;
 
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(&config_bytes).await.map_err(|e| {

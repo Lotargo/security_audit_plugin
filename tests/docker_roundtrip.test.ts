@@ -55,10 +55,17 @@ describeDocker('live Docker host-to-sandbox roundtrip', () => {
     expect(typeof report.network_requests_count).toBe('number');
   }, 60_000);
 
-  it('applies local scope through the aligned DTO and executes encrypted commands', async () => {
+  it('drops agent execution privileges and preserves encrypted command execution', async () => {
     const scope = await bridge.setScope({ mode: 'local', arm_canaries: false });
     expect(scope.status).toBe('success');
     expect(scope.mode).toBe('local');
+
+    const identity = await bridge.exec('id -u');
+    expect(identity.exit_code).toBe(0);
+    expect(identity.stdout.trim()).not.toBe('0');
+
+    const nftAccess = await bridge.exec('nft list ruleset');
+    expect(nftAccess.exit_code).not.toBe(0);
 
     const result = await bridge.exec('printf CONTROL_PLANE_OK');
     expect(result.exit_code).toBe(0);

@@ -17,6 +17,14 @@ export interface DockerRunnerOptions {
   sessionKeyHex?: string;
   memoryLimit?: string;
   pidsLimit?: number;
+  auditExecUid?: number;
+  auditExecGid?: number;
+}
+
+function defaultAuditId(kind: 'uid' | 'gid'): number {
+  const getter = kind === 'uid' ? (process as any).getuid : (process as any).getgid;
+  const value = typeof getter === 'function' ? Number(getter.call(process)) : 1000;
+  return Number.isInteger(value) && value > 0 ? value : 65534;
 }
 
 export function findSandboxRuntimeDir(): string | null {
@@ -28,9 +36,7 @@ export function findSandboxRuntimeDir(): string | null {
   ];
 
   for (const candidate of candidates) {
-    if (fs.existsSync(path.join(candidate, 'Dockerfile'))) {
-      return candidate;
-    }
+    if (fs.existsSync(path.join(candidate, 'Dockerfile'))) return candidate;
   }
   return null;
 }
@@ -45,6 +51,8 @@ export class DockerRunner {
   private sessionKeyHex?: string;
   private memoryLimit: string;
   private pidsLimit: number;
+  private auditExecUid: number;
+  private auditExecGid: number;
 
   constructor(options: DockerRunnerOptions = {}) {
     this.containerName = options.containerName || 'security-audit-sandbox';
@@ -56,6 +64,8 @@ export class DockerRunner {
     this.sessionKeyHex = options.sessionKeyHex;
     this.memoryLimit = options.memoryLimit || '4g';
     this.pidsLimit = options.pidsLimit || 256;
+    this.auditExecUid = options.auditExecUid || defaultAuditId('uid');
+    this.auditExecGid = options.auditExecGid || defaultAuditId('gid');
   }
 
   private docker(args: string[], inherit = false): Buffer {
@@ -94,8 +104,7 @@ export class DockerRunner {
   public isImageAvailable(imageName?: string): boolean {
     const target = imageName || this.imageName;
     try {
-      if (this.docker(['images', '-q', target]).toString().trim()) return true;
-      return Boolean(this.docker(['images', '-q', this.registryImage]).toString().trim());
+      return Boolean(this.docker(['images', '-q', target]).toString().trim());
     } catch {
       return false;
     }
@@ -106,9 +115,7 @@ export class DockerRunner {
     console.error(`[*] Pulling sandbox image from registry: ${target}...`);
     try {
       this.docker(['pull', target], true);
-      if (target !== this.imageName) {
-        this.docker(['tag', target, this.imageName]);
-      }
+      if (target !== this.imageName) this.docker(['tag', target, this.imageName]);
       return true;
     } catch (err: any) {
       console.error(`[!] Failed to pull image from ${target}: ${err.message}`);
@@ -184,13 +191,10 @@ export class DockerRunner {
     if (this.isRunning()) {
       const healthy = await this.checkHealth(1000);
       if (healthy && this.hasMatchingTrustMaterial()) return;
-      // Never reuse a container that was bootstrapped by another MCP session/keypair.
       this.stop();
     }
 
-    if (!this.isDockerAvailable()) {
-      throw new Error('Docker daemon is not running or inaccessible.');
-    }
+    if (!this.isDockerAvailable()) throw new Error('Docker daemon is not running or inaccessible.');
 
     await this.ensureImageAvailable();
     this.stop();
@@ -212,6 +216,10 @@ export class DockerRunner {
       `HOST_PUBKEY_HEX=${this.hostPubkeyHex}`,
       '-e',
       `BRIDGE_SESSION_KEY_HEX=${this.sessionKeyHex}`,
+      '-e',
+      `AUDIT_EXEC_UID=${this.auditExecUid}`,
+      '-e',
+      `AUDIT_EXEC_GID=${this.auditExecGid}`,
       this.imageName,
     ];
 
@@ -243,12 +251,7 @@ export class DockerRunner {
   public checkHealth(timeoutMs = 1000): Promise<boolean> {
     return new Promise((resolve) => {
       const req = http.get(
-        {
-          host: '127.0.0.1',
-          port: this.hostPort,
-          path: '/health',
-          timeout: timeoutMs,
-        },
+        { host: '127.0.0.1', port: this.hostPort, path: '/health', timeout: timeoutMs },
         (res) => {
           res.resume();
           resolve(res.statusCode === 200);
