@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   extractTargetHostname,
+  isUrlInScope,
   normalizeCidrList,
   normalizeIpSpec,
+  normalizeScopeHosts,
   resolveScopeTargets,
 } from '../src/mcp/security/scope_resolver.js';
 
@@ -55,5 +57,23 @@ describe('scope resolver', () => {
         throw new Error('ENOTFOUND');
       })
     ).rejects.toThrow('Failed to resolve scope target missing.example');
+  });
+
+  it('builds exact L7 host allowlists and rejects broad proxy/Tor CIDRs', () => {
+    expect(
+      normalizeScopeHosts(['https://Example.COM/path', '203.0.113.7', '[2001:db8::1]:443'])
+    ).toEqual(['2001:db8::1', '203.0.113.7', 'example.com']);
+
+    expect(() => normalizeScopeHosts(['198.51.100.0/24'])).toThrow(
+      'Proxy/Tor scope target must be a single host'
+    );
+  });
+
+  it('matches managed network calls to exact scoped hosts only', () => {
+    const hosts = normalizeScopeHosts(['example.com', 'api.example.com']);
+    expect(isUrlInScope('https://example.com/a', hosts)).toBe(true);
+    expect(isUrlInScope('https://api.example.com/v1', hosts)).toBe(true);
+    expect(isUrlInScope('https://www.example.com/', hosts)).toBe(false);
+    expect(isUrlInScope('file:///etc/passwd', hosts)).toBe(false);
   });
 });
