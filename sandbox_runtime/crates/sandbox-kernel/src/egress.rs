@@ -360,7 +360,9 @@ impl EgressManager {
                 rules.push_str("        # Local mode: no new non-loopback network connections\n");
             }
             AuditMode::Remote | AuditMode::Hybrid => {
-                rules.push_str("        # Remote / Hybrid mode: explicit pinned-target egress only\n");
+                rules.push_str(
+                    "        # Remote / Hybrid mode: explicit pinned-target egress only\n",
+                );
 
                 if !dns_v4.is_empty() {
                     rules.push_str("        ip daddr @dns_resolvers_v4 udp dport 53 accept comment \"DNS resolver v4\"\n");
@@ -392,7 +394,8 @@ impl EgressManager {
                     rules.push_str("        # Local Tor SOCKS/Control connections are covered by loopback accept\n");
                 }
                 if config.proxy_enabled {
-                    rules.push_str("        # Upstream proxy endpoint is pinned in allowed CIDRs\n");
+                    rules
+                        .push_str("        # Upstream proxy endpoint is pinned in allowed CIDRs\n");
                 }
             }
         }
