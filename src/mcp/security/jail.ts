@@ -51,6 +51,20 @@ export class JailGuard {
       throw new JailSecurityError('URL schemes are not allowed in filesystem paths');
     }
 
+    // Reject UNC paths (//server/share or \\server\share)
+    if (/^[/\\]{2}/.test(userPath)) {
+      throw new JailSecurityError(`UNC network path forbidden: "${userPath}"`);
+    }
+
+    // Check Windows drive letter paths across all platforms (e.g. C:\Windows or C:/Windows)
+    if (/^[a-zA-Z]:[/\\]/.test(userPath)) {
+      if (process.platform !== 'win32') {
+        throw new JailSecurityError(
+          `Windows absolute path forbidden on POSIX: "${userPath}" resolves outside workspace root "${this.workspaceRoot}"`
+        );
+      }
+    }
+
     // Resolve path relative to workspaceRoot
     const resolvedPath = path.resolve(this.workspaceRoot, userPath);
 

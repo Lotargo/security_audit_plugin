@@ -38,7 +38,9 @@ pub async fn handle_provision_egress(
 pub async fn handle_emergency_isolate(
     Json(payload): Json<EmergencyIsolateRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let reason = payload.reason.unwrap_or_else(|| "Manual emergency isolation triggered".to_string());
+    let reason = payload
+        .reason
+        .unwrap_or_else(|| "Manual emergency isolation triggered".to_string());
     warn!("Emergency isolation request received: {}", reason);
 
     match KillSwitch::trigger(&reason) {

@@ -1,5 +1,5 @@
-use std::path::Path;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use tokio::fs;
 use tracing::info;
 
@@ -41,16 +41,15 @@ pub async fn process_command_output(
 
     // Save full raw output
     fs::write(&log_path, raw_output).await?;
-    info!("Output exceeded 30KB ({} chars). Full dump saved to {:?}", total_chars, log_path);
+    info!(
+        "Output exceeded 30KB ({} chars). Full dump saved to {:?}",
+        total_chars, log_path
+    );
 
     // Extract head and tail
     let chars: Vec<char> = raw_output.chars().collect();
     let head: String = chars.iter().take(PREVIEW_HEAD_CHARS).collect();
-    let tail_start = if total_chars > PREVIEW_TAIL_CHARS {
-        total_chars - PREVIEW_TAIL_CHARS
-    } else {
-        0
-    };
+    let tail_start = total_chars.saturating_sub(PREVIEW_TAIL_CHARS);
     let tail: String = chars.iter().skip(tail_start).collect();
 
     let formatted_output = format!(
@@ -84,7 +83,9 @@ mod tests {
     async fn test_small_output_not_truncated() {
         let temp_dir = TempDir::new().unwrap();
         let small_text = "Small output text 123";
-        let res = process_command_output("test_1", small_text, temp_dir.path()).await.unwrap();
+        let res = process_command_output("test_1", small_text, temp_dir.path())
+            .await
+            .unwrap();
 
         assert!(!res.is_truncated);
         assert_eq!(res.total_chars, small_text.len());
@@ -96,7 +97,9 @@ mod tests {
     async fn test_large_output_truncated_and_saved() {
         let temp_dir = TempDir::new().unwrap();
         let large_text = "A".repeat(40_000);
-        let res = process_command_output("test_large", &large_text, temp_dir.path()).await.unwrap();
+        let res = process_command_output("test_large", &large_text, temp_dir.path())
+            .await
+            .unwrap();
 
         assert!(res.is_truncated);
         assert_eq!(res.total_chars, 40_000);

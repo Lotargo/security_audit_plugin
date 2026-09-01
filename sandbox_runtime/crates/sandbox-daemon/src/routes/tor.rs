@@ -4,7 +4,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tracing::{info, warn};
 
-pub async fn handle_rotate_tor() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+pub async fn handle_rotate_tor(
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     info!("Tor IP rotation requested: Attempting to send SIGNAL NEWNYM to 127.0.0.1:9051");
 
     match TcpStream::connect("127.0.0.1:9051").await {
@@ -56,7 +57,9 @@ pub async fn handle_rotate_tor() -> Result<Json<serde_json::Value>, (StatusCode,
             if !sig_resp.starts_with("250") {
                 return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": format!("Tor NEWNYM signal rejected: {}", sig_resp.trim())})),
+                    Json(
+                        json!({"error": format!("Tor NEWNYM signal rejected: {}", sig_resp.trim())}),
+                    ),
                 ));
             }
 
@@ -68,7 +71,10 @@ pub async fn handle_rotate_tor() -> Result<Json<serde_json::Value>, (StatusCode,
             })))
         }
         Err(e) => {
-            warn!("Tor service not reachable on 127.0.0.1:9051 (mock/dev fallback active): {}", e);
+            warn!(
+                "Tor service not reachable on 127.0.0.1:9051 (mock/dev fallback active): {}",
+                e
+            );
             Ok(Json(json!({
                 "status": "simulated",
                 "message": "Tor ControlPort unreachable in current environment, simulated IP rotation success",

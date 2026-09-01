@@ -1,6 +1,6 @@
-pub mod exec;
-pub mod egress;
 pub mod background;
-pub mod tor;
 pub mod canary;
+pub mod egress;
+pub mod exec;
 pub mod probe;
+pub mod tor;

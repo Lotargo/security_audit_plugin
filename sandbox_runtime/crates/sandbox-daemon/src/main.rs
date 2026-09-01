@@ -1,11 +1,11 @@
-use std::net::SocketAddr;
-use std::sync::Arc;
 use axum::{
     middleware,
     routing::{get, post},
     Extension, Json, Router,
 };
 use serde_json::json;
+use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -23,8 +23,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Initialize structured logging
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "sandbox_daemon=info,sandbox_kernel=info,tower_http=info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "sandbox_daemon=info,sandbox_kernel=info,tower_http=info".into()
+            }),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -60,13 +61,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/execute", post(routes::exec::handle_execute))
         .route("/execute_tmux", post(routes::exec::handle_interactive_tmux))
         // Egress & Isolation
-        .route("/provision_egress", post(routes::egress::handle_provision_egress))
-        .route("/emergency_isolate", post(routes::egress::handle_emergency_isolate))
-        .route("/isolation_status", get(routes::egress::handle_isolation_status))
+        .route(
+            "/provision_egress",
+            post(routes::egress::handle_provision_egress),
+        )
+        .route(
+            "/emergency_isolate",
+            post(routes::egress::handle_emergency_isolate),
+        )
+        .route(
+            "/isolation_status",
+            get(routes::egress::handle_isolation_status),
+        )
         // Background jobs
-        .route("/start_background", post(routes::background::handle_start_background))
+        .route(
+            "/start_background",
+            post(routes::background::handle_start_background),
+        )
         .route("/poll_logs", get(routes::background::handle_poll_logs))
-        .route("/kill_background", post(routes::background::handle_kill_background))
+        .route(
+            "/kill_background",
+            post(routes::background::handle_kill_background),
+        )
         // Tor & Anonymity
         .route("/rotate_tor", post(routes::tor::handle_rotate_tor))
         // Canary Deception

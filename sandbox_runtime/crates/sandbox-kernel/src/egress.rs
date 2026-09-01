@@ -99,7 +99,7 @@ impl EgressManager {
         rules.push_str("flush ruleset\n\n");
 
         rules.push_str("table inet filter {\n");
-        
+
         // Sets for dynamic targets and denied CIDRs
         rules.push_str("    set allowed_hosts {\n");
         rules.push_str("        type ipv4_addr\n");
@@ -125,7 +125,10 @@ impl EgressManager {
         rules.push_str("        iifname \"lo\" accept\n");
         rules.push_str("        ct state established,related accept\n");
         rules.push_str("        ct state invalid drop\n");
-        rules.push_str(&format!("        tcp dport {} accept comment \"management-net\"\n", config.management_port));
+        rules.push_str(&format!(
+            "        tcp dport {} accept comment \"management-net\"\n",
+            config.management_port
+        ));
         rules.push_str("    }\n\n");
 
         // Forward chain
@@ -158,7 +161,10 @@ impl EgressManager {
                 // If Proxy is enabled, allow access to proxy destination
                 if config.proxy_enabled {
                     if let Some(proxy) = &config.proxy_target {
-                        rules.push_str(&format!("        # Upstream proxy destination: {}\n", proxy));
+                        rules.push_str(&format!(
+                            "        # Upstream proxy destination: {}\n",
+                            proxy
+                        ));
                     }
                 }
 
@@ -194,7 +200,10 @@ impl EgressManager {
         info!("Applying nftables ruleset for mode: {:?}", config.mode);
 
         if self.mock_mode {
-            info!("Running in mock/non-Linux mode. nftables rules generated successfully:\n{}", rules);
+            info!(
+                "Running in mock/non-Linux mode. nftables rules generated successfully:\n{}",
+                rules
+            );
             return Ok(());
         }
 

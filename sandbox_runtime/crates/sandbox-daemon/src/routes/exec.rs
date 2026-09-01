@@ -1,14 +1,14 @@
-use std::path::PathBuf;
-use std::time::Duration;
 use axum::{http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::path::PathBuf;
+use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
 
-use sandbox_kernel::watchdog::{process_command_output, WatchdogResult};
 use sandbox_kernel::tmux::TmuxManager;
+use sandbox_kernel::watchdog::{process_command_output, WatchdogResult};
 
 #[derive(Debug, Deserialize)]
 pub struct ExecRequest {
@@ -37,9 +37,18 @@ pub async fn handle_execute(
 ) -> Result<Json<ExecResponse>, (StatusCode, Json<serde_json::Value>)> {
     let timeout_duration = Duration::from_secs(payload.timeout_secs.unwrap_or(60));
     let work_dir = payload.work_dir.unwrap_or_else(|| "/workspace".to_string());
-    let cmd_id = format!("exec_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+    let cmd_id = format!(
+        "exec_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
 
-    info!("Executing command: '{}' in directory '{}'", payload.command, work_dir);
+    info!(
+        "Executing command: '{}' in directory '{}'",
+        payload.command, work_dir
+    );
 
     #[cfg(target_os = "windows")]
     let mut cmd = {
@@ -74,7 +83,9 @@ pub async fn handle_execute(
             warn!("Command execution timed out after {:?}", timeout_duration);
             return Err((
                 StatusCode::GATEWAY_TIMEOUT,
-                Json(json!({"error": format!("Command timed out after {}s", timeout_duration.as_secs())})),
+                Json(
+                    json!({"error": format!("Command timed out after {}s", timeout_duration.as_secs())}),
+                ),
             ));
         }
     };
@@ -106,8 +117,13 @@ pub async fn handle_execute(
 pub async fn handle_interactive_tmux(
     Json(payload): Json<InteractiveTmuxRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let session = payload.session.unwrap_or_else(|| "audit_session".to_string());
-    info!("Sending interactive input to tmux session '{}': {}", session, payload.input);
+    let session = payload
+        .session
+        .unwrap_or_else(|| "audit_session".to_string());
+    info!(
+        "Sending interactive input to tmux session '{}': {}",
+        session, payload.input
+    );
 
     match TmuxManager::send_input(&session, &payload.input) {
         Ok(_) => Ok(Json(json!({"status": "success", "session": session}))),

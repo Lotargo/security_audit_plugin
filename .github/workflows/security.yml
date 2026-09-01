@@ -42,10 +42,15 @@ jobs:
             echo "No package-lock.json found yet."
           fi
 
+      - name: Install cargo-audit (pre-built binary)
+        uses: taiki-e/install-action@cargo-audit
+        continue-on-error: true
+
       - name: Audit Cargo Dependencies
         run: |
-          if [ -f sandbox_runtime/Cargo.lock ] || [ -f Cargo.lock ]; then
-            cargo install cargo-audit --locked || true
+          if [ -f sandbox_runtime/Cargo.lock ]; then
+            cargo audit --file sandbox_runtime/Cargo.lock || true
+          elif [ -f Cargo.lock ]; then
             cargo audit || true
           else
             echo "No Cargo.lock found yet."

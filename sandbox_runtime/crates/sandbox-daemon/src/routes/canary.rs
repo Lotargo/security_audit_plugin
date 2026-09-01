@@ -1,8 +1,8 @@
-use std::path::PathBuf;
-use std::sync::Arc;
 use axum::{http::StatusCode, Extension, Json};
 use serde::Deserialize;
 use serde_json::json;
+use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
@@ -18,18 +18,24 @@ pub async fn handle_arm_canary(
     Json(payload): Json<ArmCanaryRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let base_path = PathBuf::from(payload.base_dir.unwrap_or_else(|| "/workspace".to_string()));
-    info!("Arming canary tripwires under base directory: {:?}", base_path);
+    info!(
+        "Arming canary tripwires under base directory: {:?}",
+        base_path
+    );
 
     let mut mgr = canary_mgr.lock().await;
     match mgr.arm_canaries(&base_path).await {
         Ok(traps) => {
-            let traps_summary: Vec<_> = traps.iter().map(|t| {
-                json!({
-                    "path": t.file_path.to_string_lossy(),
-                    "type": t.trap_type,
-                    "description": t.description
+            let traps_summary: Vec<_> = traps
+                .iter()
+                .map(|t| {
+                    json!({
+                        "path": t.file_path.to_string_lossy(),
+                        "type": t.trap_type,
+                        "description": t.description
+                    })
                 })
-            }).collect();
+                .collect();
 
             Ok(Json(json!({
                 "status": "armed",

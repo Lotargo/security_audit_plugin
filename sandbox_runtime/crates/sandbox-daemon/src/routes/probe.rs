@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
 use axum::{http::StatusCode, Json};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use tracing::{error, info};
 
 #[derive(Debug, Deserialize)]
@@ -27,9 +27,15 @@ pub struct ProbeResponse {
 pub async fn handle_http_probe(
     Json(payload): Json<ProbeRequest>,
 ) -> Result<Json<ProbeResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let method_str = payload.method.unwrap_or_else(|| "GET".to_string()).to_uppercase();
+    let method_str = payload
+        .method
+        .unwrap_or_else(|| "GET".to_string())
+        .to_uppercase();
     let timeout_duration = Duration::from_secs(payload.timeout_secs.unwrap_or(15));
-    info!("Sending HTTP probe: {} {} (proxy: {:?})", method_str, payload.url, payload.proxy);
+    info!(
+        "Sending HTTP probe: {} {} (proxy: {:?})",
+        method_str, payload.url, payload.proxy
+    );
 
     let mut client_builder = reqwest::Client::builder()
         .timeout(timeout_duration)
@@ -79,7 +85,10 @@ pub async fn handle_http_probe(
     if let Some(headers_map) = payload.headers {
         let mut header_map = HeaderMap::new();
         for (k, v) in headers_map {
-            if let (Ok(h_name), Ok(h_val)) = (HeaderName::from_bytes(k.as_bytes()), HeaderValue::from_str(&v)) {
+            if let (Ok(h_name), Ok(h_val)) = (
+                HeaderName::from_bytes(k.as_bytes()),
+                HeaderValue::from_str(&v),
+            ) {
                 header_map.insert(h_name, h_val);
             }
         }

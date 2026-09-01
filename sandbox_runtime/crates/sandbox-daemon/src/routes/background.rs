@@ -21,10 +21,19 @@ pub async fn handle_start_background(
     Json(payload): Json<StartBackgroundRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let session = payload.session.unwrap_or_else(|| {
-        format!("bg_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+        format!(
+            "bg_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        )
     });
 
-    info!("Starting background task in tmux session '{}': {}", session, payload.command);
+    info!(
+        "Starting background task in tmux session '{}': {}",
+        session, payload.command
+    );
 
     match TmuxManager::start_session(&session, Some(&payload.command)) {
         Ok(_) => Ok(Json(json!({
@@ -63,7 +72,8 @@ pub async fn handle_poll_logs(
 pub async fn handle_kill_background(
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let session = payload.get("session")
+    let session = payload
+        .get("session")
         .and_then(|s| s.as_str())
         .unwrap_or("audit_session");
 

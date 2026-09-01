@@ -15,7 +15,10 @@ pub struct TmuxManager;
 
 impl TmuxManager {
     /// Creates a new background tmux session with extended 20,000 line scrollback buffer
-    pub fn start_session(session_name: &str, initial_command: Option<&str>) -> Result<(), TmuxError> {
+    pub fn start_session(
+        session_name: &str,
+        initial_command: Option<&str>,
+    ) -> Result<(), TmuxError> {
         info!("Starting tmux session '{}'", session_name);
 
         #[cfg(target_os = "linux")]
@@ -26,7 +29,10 @@ impl TmuxManager {
                 .status()?;
 
             if !status.success() {
-                return Err(TmuxError::ExecutionFailed(format!("Failed to create tmux session {}", session_name)));
+                return Err(TmuxError::ExecutionFailed(format!(
+                    "Failed to create tmux session {}",
+                    session_name
+                )));
             }
 
             // 2. Set scrollback buffer to 20,000 lines
@@ -43,7 +49,10 @@ impl TmuxManager {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = initial_command;
-            info!("Non-Linux platform: Mock tmux session '{}' initialized with command: {:?}", session_name, initial_command);
+            info!(
+                "Non-Linux platform: Mock tmux session '{}' initialized with command: {:?}",
+                session_name, initial_command
+            );
         }
 
         Ok(())
@@ -58,7 +67,10 @@ impl TmuxManager {
                 .status()?;
 
             if !status.success() {
-                return Err(TmuxError::ExecutionFailed(format!("Failed to send input to tmux session {}", session_name)));
+                return Err(TmuxError::ExecutionFailed(format!(
+                    "Failed to send input to tmux session {}",
+                    session_name
+                )));
             }
         }
 
@@ -66,7 +78,10 @@ impl TmuxManager {
         {
             let _ = session_name;
             let _ = input;
-            info!("Non-Linux platform: Mock tmux input sent to '{}': {}", session_name, input);
+            info!(
+                "Non-Linux platform: Mock tmux input sent to '{}': {}",
+                session_name, input
+            );
         }
 
         Ok(())
@@ -115,7 +130,10 @@ impl TmuxManager {
     }
 
     /// Reads incremental log delta since last read line index
-    pub fn read_session_log_diff(session_name: &str, last_line_count: usize) -> Result<(String, usize), TmuxError> {
+    pub fn read_session_log_diff(
+        session_name: &str,
+        last_line_count: usize,
+    ) -> Result<(String, usize), TmuxError> {
         let full_output = Self::capture_pane(session_name, None)?;
         let lines: Vec<&str> = full_output.lines().collect();
         let total_lines = lines.len();
@@ -139,14 +157,20 @@ impl TmuxManager {
                 .status()?;
 
             if !status.success() {
-                return Err(TmuxError::ExecutionFailed(format!("Failed to kill tmux session {}", session_name)));
+                return Err(TmuxError::ExecutionFailed(format!(
+                    "Failed to kill tmux session {}",
+                    session_name
+                )));
             }
         }
 
         #[cfg(not(target_os = "linux"))]
         {
             let _ = session_name;
-            info!("Non-Linux platform: Mock tmux session '{}' killed.", session_name);
+            info!(
+                "Non-Linux platform: Mock tmux session '{}' killed.",
+                session_name
+            );
         }
 
         Ok(())

@@ -28,6 +28,12 @@ pub struct CanaryManager {
     is_armed: Arc<AtomicBool>,
 }
 
+impl Default for CanaryManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CanaryManager {
     pub fn new() -> Self {
         Self {
@@ -100,7 +106,7 @@ STRIPE_API_KEY="sk_live_51CanaryDecoyKeyDoNotUseExfiltrationTrap"
 
         tokio::spawn(async move {
             info!("Canary inotify/access watcher loop started.");
-            
+
             // Record initial metadata timestamps and size
             let mut initial_meta: Vec<(PathBuf, u64, Option<std::time::SystemTime>)> = Vec::new();
             for trap in &traps {
@@ -127,7 +133,8 @@ STRIPE_API_KEY="sk_live_51CanaryDecoyKeyDoNotUseExfiltrationTrap"
 
                         if modified || accessed {
                             error!("TRIPWIRE TRIGGERED! Unauthorized access or modification on canary: {:?}", path);
-                            let _ = KillSwitch::trigger(&format!("Canary trap triggered: {:?}", path));
+                            let _ =
+                                KillSwitch::trigger(&format!("Canary trap triggered: {:?}", path));
                             is_armed.store(false, Ordering::SeqCst);
                             return;
                         }

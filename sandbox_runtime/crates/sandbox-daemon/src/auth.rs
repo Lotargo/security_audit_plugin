@@ -1,6 +1,3 @@
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 use axum::{
     body::Body,
     extract::Request,
@@ -11,6 +8,9 @@ use axum::{
 };
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde_json::json;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, warn};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -67,7 +67,10 @@ impl RatchetAuthState {
 
         // 1. Verify epoch timestamp
         let epoch: u64 = epoch_str.parse().map_err(|_| {
-            (StatusCode::BAD_REQUEST, "Invalid X-Ratchet-Epoch header".to_string())
+            (
+                StatusCode::BAD_REQUEST,
+                "Invalid X-Ratchet-Epoch header".to_string(),
+            )
         })?;
 
         let now = SystemTime::now()
@@ -76,7 +79,10 @@ impl RatchetAuthState {
             .as_secs();
 
         if epoch > now + 5 || now.saturating_sub(epoch) > MAX_EPOCH_DRIFT_SECS {
-            warn!("Rejected request: Expired or future epoch. Request: {}, Current: {}", epoch, now);
+            warn!(
+                "Rejected request: Expired or future epoch. Request: {}, Current: {}",
+                epoch, now
+            );
             return Err((
                 StatusCode::UNAUTHORIZED,
                 format!("Epoch expired (drift > {}s)", MAX_EPOCH_DRIFT_SECS),
@@ -88,7 +94,10 @@ impl RatchetAuthState {
             let mut nonces = self.seen_nonces.lock().unwrap();
             if nonces.contains(nonce) {
                 warn!("Rejected request: Replayed nonce detected: {}", nonce);
-                return Err((StatusCode::FORBIDDEN, "Replay attack detected: Nonce already used".to_string()));
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    "Replay attack detected: Nonce already used".to_string(),
+                ));
             }
             // Keep cache bounded
             if nonces.len() > 10_000 {
@@ -110,18 +119,27 @@ impl RatchetAuthState {
         })?;
 
         let sig_bytes = hex::decode(signature_hex).map_err(|_| {
-            (StatusCode::BAD_REQUEST, "Invalid hex signature in X-Signature-Host".to_string())
+            (
+                StatusCode::BAD_REQUEST,
+                "Invalid hex signature in X-Signature-Host".to_string(),
+            )
         })?;
 
         let signature = Signature::from_slice(&sig_bytes).map_err(|_| {
-            (StatusCode::BAD_REQUEST, "Invalid signature structure".to_string())
+            (
+                StatusCode::BAD_REQUEST,
+                "Invalid signature structure".to_string(),
+            )
         })?;
 
         pubkey
             .verify_strict(message.as_bytes(), &signature)
             .map_err(|e| {
                 error!("RatchetGuard: Ed25519 signature verification failed: {}", e);
-                (StatusCode::UNAUTHORIZED, "Invalid host signature".to_string())
+                (
+                    StatusCode::UNAUTHORIZED,
+                    "Invalid host signature".to_string(),
+                )
             })?;
 
         // 5. Zeroize sensitive temporary message buffer
@@ -153,7 +171,10 @@ pub async fn ratchet_auth_middleware(
     let method = req.method().to_string();
     let path = req.uri().path().to_string();
 
-    let signature = match headers.get("x-signature-host").and_then(|h| h.to_str().ok()) {
+    let signature = match headers
+        .get("x-signature-host")
+        .and_then(|h| h.to_str().ok())
+    {
         Some(s) => s,
         None => {
             return (
@@ -199,7 +220,9 @@ pub async fn ratchet_auth_middleware(
         }
     };
 
-    if let Err((status, msg)) = state.verify_signature(&method, &path, epoch, nonce, &bytes, signature) {
+    if let Err((status, msg)) =
+        state.verify_signature(&method, &path, epoch, nonce, &bytes, signature)
+    {
         return (status, Json(json!({"error": msg}))).into_response();
     }
 
@@ -243,7 +266,8 @@ mod tests {
         assert!(res.is_ok());
 
         // Replay attack test (same nonce)
-        let replay_res = auth_state.verify_signature(method, path, &epoch_str, nonce, body, &sig_hex);
+        let replay_res =
+            auth_state.verify_signature(method, path, &epoch_str, nonce, body, &sig_hex);
         assert!(replay_res.is_err());
         assert_eq!(replay_res.unwrap_err().0, StatusCode::FORBIDDEN);
     }

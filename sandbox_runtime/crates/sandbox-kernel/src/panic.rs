@@ -78,7 +78,10 @@ table inet filter {
 
         #[cfg(not(target_os = "linux"))]
         {
-            info!("Non-Linux platform: Emergency blackout rules compiled in memory:\n{}", blackout_rules);
+            info!(
+                "Non-Linux platform: Emergency blackout rules compiled in memory:\n{}",
+                blackout_rules
+            );
         }
 
         info!("Sandbox network has been completely severed and isolated.");

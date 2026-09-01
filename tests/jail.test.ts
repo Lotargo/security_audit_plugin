@@ -28,7 +28,19 @@ describe('JailGuard Path Traversal Protection', () => {
 
   it('rejects absolute paths outside workspace', () => {
     expect(() => {
+      jail.resolveSafePath('/etc/shadow');
+    }).toThrow(JailSecurityError);
+
+    expect(() => {
       jail.resolveSafePath('C:\\Windows\\System32\\cmd.exe');
+    }).toThrow(JailSecurityError);
+
+    expect(() => {
+      jail.resolveSafePath('D:/secrets/key.pem');
+    }).toThrow(JailSecurityError);
+
+    expect(() => {
+      jail.resolveSafePath('\\\\fileserver\\backup\\data.txt');
     }).toThrow(JailSecurityError);
   });
 
