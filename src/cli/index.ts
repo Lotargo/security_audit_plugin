@@ -17,7 +17,7 @@ export function createCli(): Command {
   program
     .name('security-audit')
     .description('Security Audit Plugin: Isolated Docker Sandbox, Rust Kernel, Stealth Browser, Tor & 19 AgentSkills')
-    .version('0.4.0');
+    .version('0.6.0');
 
   // 1. MCP Server
   program

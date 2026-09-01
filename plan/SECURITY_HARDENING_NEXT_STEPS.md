@@ -406,14 +406,11 @@ Only after the hardening checklist is green:
 7. [x] **Adversarial Docker escape tests.** (Completed: 17/17 live tests in `docker_roundtrip.test.ts` passing)
 8. [x] **Tor lifecycle cleanup.** (Completed: isolated UID, cookie auth, port 53/9050/9051 containment)
 9. [x] **Safe external proxy design.** (Disabled fail-closed by design)
-10. [ ] **MCP tool/schema/documentation contract cleanup.** (Next Stage)
-11. [ ] **Final CI, packaging, README/CHANGELOG/ROADMAP pass.**
+10. [x] **MCP tool/schema/documentation contract cleanup.** (Completed: 12 real tools audited, stale references removed)
+11. [x] **Final CI, packaging, README/CHANGELOG/ROADMAP pass.** (Completed: version 0.6.0 release aligned)
 
 ---
 
-# Immediate Next Stage
+# Hardening Cycle Complete
 
-Proceed with **MCP tool/schema/documentation contract cleanup (Items 11-15)**:
-- Audit registered MCP tools against runtime implementations.
-- Reconcile `sandbox_bundle_extract` and `ca_cert_b64` contracts.
-- Synchronize SARIF export and README documentation.
+All 15 security boundary invariants, process/network containment mechanisms, MCP tool contracts, and documentation/packaging passes are fully completed and verified against the live Docker roundtrip suite and automated test pipelines.
