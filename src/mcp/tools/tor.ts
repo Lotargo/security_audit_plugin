@@ -6,7 +6,7 @@ export const RotateTorSchema = z.object({});
 export function registerTorTool(server: any, bridge: SandboxBridge) {
   server.tool(
     'sandbox_rotate_tor_ip',
-    'Sends SIGNAL NEWNYM to Tor Control Port to rotate circuit and obtain a fresh exit IP address for WAF/Rate-limit bypass.',
+    'Requests a new Tor circuit via the cookie-authenticated localhost ControlPort. Requires an active Tor-enabled audit scope.',
     RotateTorSchema.shape,
     async (_args: z.infer<typeof RotateTorSchema>) => {
       try {
