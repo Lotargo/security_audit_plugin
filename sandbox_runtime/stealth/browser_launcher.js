@@ -15,16 +15,33 @@ import dns from 'dns/promises';
 
 chromium.use(stealthPlugin());
 
+function normalizeHost(host) {
+  const value = String(host || '').trim().toLowerCase();
+  return value.startsWith('[') && value.endsWith(']') ? value.slice(1, -1) : value;
+}
+
+function normalizeAllowedHosts(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map(normalizeHost).filter(Boolean))].sort();
+}
+
 function isPrivateOrRestrictedIp(ipStr) {
   if (!ipStr) return true;
-  const ip = ipStr.trim().toLowerCase();
+  const ip = normalizeHost(ipStr);
 
   if (ip.startsWith('127.') || ip === '0.0.0.0') return true;
   if (ip.startsWith('10.') || ip.startsWith('192.168.')) return true;
   if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(ip)) return true;
   if (ip.startsWith('169.254.')) return true;
   if (/^100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\./.test(ip)) return true;
-  if (ip === '::1' || ip === '::' || ip.startsWith('fe80:') || ip.startsWith('fc00:') || ip.startsWith('fd00:')) return true;
+  if (
+    ip === '::1' ||
+    ip === '::' ||
+    ip.startsWith('fe80:') ||
+    ip.startsWith('fc00:') ||
+    ip.startsWith('fd00:')
+  )
+    return true;
   if (ip.startsWith('::ffff:') || ip.startsWith('64:ff9b:')) {
     const v4part = ip.split(':').pop();
     if (v4part && isPrivateOrRestrictedIp(v4part)) return true;
@@ -32,15 +49,20 @@ function isPrivateOrRestrictedIp(ipStr) {
   return false;
 }
 
-async function classifyUrl(urlStr, allowPrivate = false) {
+async function classifyUrl(urlStr, allowPrivate = false, allowedHosts = []) {
   try {
     const parsed = new URL(urlStr);
     if (!['http:', 'https:'].includes(parsed.protocol)) {
       return { ok: false, reason: `Unsupported protocol: ${parsed.protocol}` };
     }
+
+    const host = normalizeHost(parsed.hostname);
+    if (allowedHosts.length > 0 && !allowedHosts.includes(host)) {
+      return { ok: false, reason: `Host is outside active RoE scope: ${host}` };
+    }
+
     if (allowPrivate) return { ok: true, reason: 'allow_private' };
 
-    const host = parsed.hostname;
     if (/^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host.includes(':')) {
       if (isPrivateOrRestrictedIp(host)) {
         return { ok: false, reason: `Direct private IP access blocked: ${host}` };
@@ -89,20 +111,25 @@ async function runAudit() {
   const targetUrl = config.url;
   if (!targetUrl) throw new Error('Browser audit config is missing url');
 
-  const initialCheck = await classifyUrl(targetUrl, config.allow_private === true);
-  if (!initialCheck.ok) {
-    throw new Error(`Target blocked by SSRF guard: ${initialCheck.reason}`);
+  const allowedHosts = normalizeAllowedHosts(config.allowed_hosts);
+  const proxyUrl = config.proxy || process.env.AUDIT_PROXY;
+  if (proxyUrl && allowedHosts.length === 0) {
+    throw new Error('Proxy browser audits require an explicit RoE host allowlist');
   }
 
-  const proxyUrl = config.proxy || process.env.AUDIT_PROXY;
+  const allowPrivate = config.allow_private === true;
+  const initialCheck = await classifyUrl(targetUrl, allowPrivate, allowedHosts);
+  if (!initialCheck.ok) {
+    throw new Error(`Target blocked by scope/SSRF guard: ${initialCheck.reason}`);
+  }
+
   const timeoutMs = config.timeout_ms || 30000;
   const outDir = config.out_dir || '/workspace/reports';
-  const allowPrivate = config.allow_private === true;
   const skipWarmup = config.skip_warmup === true;
   const humanize = config.bypass_turnstile !== false;
 
   console.error(`[*] Launching Hardened Stealth Chromium audit against: ${targetUrl}`);
-  if (proxyUrl) console.error('[*] Upstream proxy configured.');
+  if (proxyUrl) console.error('[*] Upstream proxy configured with explicit RoE host allowlist.');
 
   const launchArgs = [
     '--no-sandbox',
@@ -148,9 +175,9 @@ async function runAudit() {
 
   await page.route('**/*', async (route) => {
     const reqUrl = route.request().url();
-    const check = await classifyUrl(reqUrl, allowPrivate);
+    const check = await classifyUrl(reqUrl, allowPrivate, allowedHosts);
     if (!check.ok) {
-      console.error(`[SSRF-Guard] Aborted forbidden destination: ${check.reason}`);
+      console.error(`[RoE-Guard] Aborted forbidden destination: ${check.reason}`);
       await route.abort('blockedbyclient');
       return;
     }
@@ -186,7 +213,7 @@ async function runAudit() {
         const urlObj = new URL(targetUrl);
         const rootUrl = `${urlObj.protocol}//${urlObj.host}/`;
         if (rootUrl !== targetUrl && rootUrl !== targetUrl + '/') {
-          const warmupCheck = await classifyUrl(rootUrl, allowPrivate);
+          const warmupCheck = await classifyUrl(rootUrl, allowPrivate, allowedHosts);
           if (warmupCheck.ok) {
             console.error(`[*] Performing Warmup Hop on site root: ${rootUrl}`);
             await page.goto(rootUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
@@ -250,6 +277,7 @@ async function runAudit() {
 
   const auditReport = {
     target_url: targetUrl,
+    scope_hosts: allowedHosts,
     title: pageTitle,
     duration_ms: Date.now() - startTime,
     navigation_error: navigationError,
