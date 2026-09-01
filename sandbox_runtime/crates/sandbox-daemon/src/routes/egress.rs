@@ -3,8 +3,9 @@ use serde::Deserialize;
 use serde_json::json;
 use tracing::{error, info, warn};
 
-use sandbox_kernel::egress::{EgressConfig, EgressError, EgressManager};
+use sandbox_kernel::egress::{EgressConfig, EgressManager};
 use sandbox_kernel::panic::KillSwitch;
+use sandbox_kernel::{apply_runtime_containment, stop_tor_best_effort};
 
 #[derive(Debug, Deserialize)]
 pub struct EmergencyIsolateRequest {
@@ -17,28 +18,35 @@ pub async fn handle_provision_egress(
     info!("Provisioning egress rules for mode: {:?}", config.mode);
     let manager = EgressManager::new();
 
-    match manager.apply_rules(&config) {
-        Ok(_) => Ok(Json(json!({
-            "status": "success",
-            "mode": config.mode,
-            "allowed_cidrs": config.allowed_cidrs,
-            "tor_enabled": config.tor_enabled,
-            "proxy_enabled": config.proxy_enabled,
-        }))),
-        Err(e) => {
-            let status = match &e {
-                EgressError::InvalidAddress(_) | EgressError::InvalidPolicy(_) => {
-                    StatusCode::BAD_REQUEST
-                }
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            error!("Failed to apply egress rules: {}", e);
-            Err((
-                status,
-                Json(json!({"error": format!("Failed to apply egress rules: {}", e)})),
-            ))
-        }
+    if let Err(e) = manager.apply_rules(&config) {
+        error!("Failed to apply egress rules: {}", e);
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Failed to apply egress rules: {}", e)})),
+        ));
     }
+
+    if let Err(e) = apply_runtime_containment(&config) {
+        // The base ruleset replacement removes any previous containment rules. If restoring the
+        // process layer fails, stop Tor immediately so a pre-existing circuit cannot remain usable
+        // through loopback by the agent identity.
+        stop_tor_best_effort();
+        error!("Failed to apply runtime containment: {}", e);
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": format!("Failed to apply runtime containment: {}", e)
+            })),
+        ));
+    }
+
+    Ok(Json(json!({
+        "status": "success",
+        "mode": config.mode,
+        "allowed_cidrs": config.allowed_cidrs,
+        "tor_enabled": config.tor_enabled,
+        "proxy_enabled": config.proxy_enabled,
+    })))
 }
 
 pub async fn handle_emergency_isolate(

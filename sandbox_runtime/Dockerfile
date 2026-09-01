@@ -56,8 +56,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Fixed, non-root identities for privileged managed network clients. These UIDs are reserved by
+# sandbox-kernel and must never overlap the host-compatible AUDIT_EXEC_UID used by agent shells.
+RUN groupadd --gid 65531 audit-tor \
+    && useradd --uid 65531 --gid 65531 --no-create-home --home-dir /var/lib/tor --shell /usr/sbin/nologin audit-tor \
+    && groupadd --gid 65532 audit-browser \
+    && useradd --uid 65532 --gid 65532 --no-create-home --home-dir /tmp --shell /usr/sbin/nologin audit-browser
+
 COPY tor/torrc /etc/tor/torrc
-RUN mkdir -p /var/lib/tor && chown -R root:root /var/lib/tor
+RUN mkdir -p /var/lib/tor \
+    && chown -R audit-tor:audit-tor /var/lib/tor \
+    && chmod 0700 /var/lib/tor
 
 WORKDIR /opt/stealth
 COPY stealth/package.json ./

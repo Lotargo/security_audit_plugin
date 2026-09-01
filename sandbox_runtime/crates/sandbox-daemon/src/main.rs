@@ -4,6 +4,7 @@ use axum::{
     Extension, Json, Router,
 };
 use serde_json::json;
+use std::io::{Error as IoError, ErrorKind};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -17,6 +18,35 @@ mod routes;
 
 use auth::{ratchet_auth_middleware, RatchetAuthState};
 use sandbox_kernel::canary::CanaryManager;
+use sandbox_kernel::{
+    apply_runtime_containment, audit_identity_conflicts_with_reserved_runtime_uid,
+    configured_audit_exec_identity, EgressConfig, EgressManager,
+};
+
+fn validate_runtime_identity_contract() -> Result<(), Box<dyn std::error::Error>> {
+    if configured_audit_exec_identity().is_none() {
+        return Err(IoError::new(
+            ErrorKind::InvalidInput,
+            "AUDIT_EXEC_UID/AUDIT_EXEC_GID are required for sandbox runtime startup",
+        )
+        .into());
+    }
+    if audit_identity_conflicts_with_reserved_runtime_uid() {
+        return Err(IoError::new(
+            ErrorKind::InvalidInput,
+            "AUDIT_EXEC_UID conflicts with a reserved Tor/browser runtime identity",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn bootstrap_local_egress() -> Result<(), Box<dyn std::error::Error>> {
+    let config = EgressConfig::default();
+    EgressManager::new().apply_rules(&config)?;
+    apply_runtime_containment(&config)?;
+    Ok(())
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -28,6 +58,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
+
+    validate_runtime_identity_contract()?;
+
+    if std::env::args().any(|arg| arg == "--bootstrap-local-egress") {
+        bootstrap_local_egress()?;
+        info!("Bootstrap local egress policy applied successfully");
+        return Ok(());
+    }
+
+    // Defense in depth for direct daemon launches. The entrypoint already applies this policy
+    // before Tor starts so there is no pre-daemon network window.
+    bootstrap_local_egress()?;
 
     info!("Starting Security Audit Sandbox Daemon (Axum/Tokio)...");
 

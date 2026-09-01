@@ -1,14 +1,12 @@
 use axum::{http::StatusCode, Json};
 use serde_json::Value;
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tracing::{error, info};
 
-use sandbox_kernel::audit_exec_identity;
+use sandbox_kernel::browser_exec_identity;
 
 pub async fn handle_browser_audit(
     Json(config): Json<Value>,
@@ -20,8 +18,15 @@ pub async fn handle_browser_audit(
         )
     })?;
 
-    let mut command = Command::new("node");
+    let (uid, gid) = browser_exec_identity();
+    let mut command = Command::new("setpriv");
     command
+        .arg(format!("--reuid={uid}"))
+        .arg(format!("--regid={gid}"))
+        .arg("--clear-groups")
+        .arg("--no-new-privs")
+        .arg("--")
+        .arg("node")
         .arg("/opt/stealth/browser_launcher.js")
         .arg("--stdin-json")
         .stdin(Stdio::piped())
@@ -29,12 +34,6 @@ pub async fn handle_browser_audit(
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .env("HOME", "/tmp");
-
-    #[cfg(unix)]
-    {
-        let (uid, gid) = audit_exec_identity();
-        command.as_std_mut().uid(uid).gid(gid);
-    }
 
     let mut child = command.spawn().map_err(|e| {
         error!("Failed to start browser launcher: {}", e);

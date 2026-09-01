@@ -45,7 +45,22 @@ describeDocker('live Docker host-to-sandbox roundtrip', () => {
     expect(status).toBe(401);
   });
 
-  it('runs the protected browser RPC using stdin JSON transport', async () => {
+  it('starts with fail-closed local egress before any scope is provisioned', async () => {
+    const result = await bridge.exec(
+      'curl -fsS --connect-timeout 1 --max-time 2 https://example.com >/dev/null'
+    );
+    expect(result.exit_code).not.toBe(0);
+  }, 10_000);
+
+  it('runs the protected browser RPC only after an explicit remote scope is provisioned', async () => {
+    const scope = await bridge.setScope({
+      mode: 'remote',
+      targets: ['https://example.com'],
+      arm_canaries: false,
+    });
+    expect(scope.status).toBe('success');
+    expect(scope.mode).toBe('remote');
+
     const report = await bridge.browserAudit({
       url: 'https://example.com',
       bypass_turnstile: false,
@@ -66,6 +81,11 @@ describeDocker('live Docker host-to-sandbox roundtrip', () => {
 
     const nftAccess = await bridge.exec('nft list ruleset');
     expect(nftAccess.exit_code).not.toBe(0);
+
+    const torSocks = await bridge.exec(
+      'curl -fsS --connect-timeout 1 --max-time 2 --socks5-hostname 127.0.0.1:9050 https://example.com >/dev/null'
+    );
+    expect(torSocks.exit_code).not.toBe(0);
 
     const result = await bridge.exec('printf CONTROL_PLANE_OK');
     expect(result.exit_code).toBe(0);
