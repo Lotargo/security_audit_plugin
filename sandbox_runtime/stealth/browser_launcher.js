@@ -8,7 +8,6 @@ import { chromium } from 'playwright-extra';
 import stealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { setupHumanCursor, humanDelay, humanScroll } from './mouse_bezier.js';
 import { WafDetector } from './waf_detector.js';
-import { runDecoyBurst } from './decoy_traffic.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -105,6 +104,7 @@ export async function runAudit() {
     userAgent:
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
     ignoreHTTPSErrors: true,
+    serviceWorkers: 'block',
     ...(Object.keys(mergedHeaders).length > 0 ? { extraHTTPHeaders: mergedHeaders } : {}),
   };
 
@@ -149,27 +149,9 @@ export async function runAudit() {
 
   try {
     if (config.generate_decoy_noise === true) {
-      if (allowedHosts.length === 0) {
-        console.error('[RoE-Guard] Decoy noise suppressed: no active scope allowlist provided.');
-      } else {
-        const inScopeDecoys = [
-          'https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap',
-          'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
-          'https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css',
-        ].filter((assetUrl) => {
-          try {
-            const h = normalizeHost(new URL(assetUrl).hostname);
-            return allowedHosts.includes(h);
-          } catch {
-            return false;
-          }
-        });
-        if (inScopeDecoys.length > 0) {
-          await runDecoyBurst(2, 100, 350);
-        } else {
-          console.error('[RoE-Guard] Decoy traffic suppressed because external decoy assets are outside RoE scope.');
-        }
-      }
+      console.error(
+        '[RoE-Guard] Decoy traffic suppressed in hardened strict-scope mode; no global egress exception is permitted.'
+      );
     }
 
     if (!skipWarmup) {

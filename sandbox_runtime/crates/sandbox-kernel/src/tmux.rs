@@ -1,3 +1,4 @@
+use crate::privilege::configured_audit_exec_identity;
 #[cfg(target_os = "linux")]
 use std::process::Command;
 use thiserror::Error;
