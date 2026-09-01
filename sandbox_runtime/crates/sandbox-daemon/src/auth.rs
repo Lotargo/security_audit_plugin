@@ -67,7 +67,8 @@ impl RatchetAuthState {
         };
 
         let session_key = if let Some(hex_str) = session_key_hex {
-            let bytes = hex::decode(hex_str).map_err(|e| format!("Invalid session key hex: {}", e))?;
+            let bytes =
+                hex::decode(hex_str).map_err(|e| format!("Invalid session key hex: {}", e))?;
             if bytes.len() != 32 {
                 return Err("Bridge session key must be exactly 32 bytes".to_string());
             }
@@ -77,7 +78,9 @@ impl RatchetAuthState {
         };
 
         if !insecure_dev_mode && trusted_host_pubkey.is_none() {
-            return Err("HOST_PUBKEY_HEX is required unless SANDBOX_INSECURE_DEV is enabled".to_string());
+            return Err(
+                "HOST_PUBKEY_HEX is required unless SANDBOX_INSECURE_DEV is enabled".to_string(),
+            );
         }
         if !insecure_dev_mode && session_key.is_none() {
             return Err(
@@ -169,7 +172,6 @@ impl RatchetAuthState {
         let mut msg_vec = message.into_bytes();
         msg_vec.zeroize();
 
-        // Only authenticated requests are allowed to consume replay-cache entries.
         let mut nonces = self.seen_nonces.lock().map_err(|_| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -398,12 +400,8 @@ mod tests {
         let verifying_key = signing_key.verifying_key();
         let pubkey_hex = hex::encode(verifying_key.as_bytes());
         let session_key_hex = "11".repeat(32);
-        let state = RatchetAuthState::new(
-            Some(&pubkey_hex),
-            Some(&session_key_hex),
-            false,
-        )
-        .unwrap();
+        let state =
+            RatchetAuthState::new(Some(&pubkey_hex), Some(&session_key_hex), false).unwrap();
         (state, signing_key)
     }
 
@@ -452,14 +450,7 @@ mod tests {
         let body = b"";
         let (epoch, valid_sig) = signed_request(&signing_key, method, path, nonce, body);
 
-        let invalid = state.verify_signature(
-            method,
-            path,
-            &epoch,
-            nonce,
-            body,
-            &"00".repeat(64),
-        );
+        let invalid = state.verify_signature(method, path, &epoch, nonce, body, &"00".repeat(64));
         assert!(invalid.is_err());
 
         assert!(state

@@ -43,7 +43,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(false);
 
     if insecure_dev {
-        warn!("!!! WARNING: SANDBOX_INSECURE_DEV is enabled. RatchetGuard verification is bypassed.");
+        warn!(
+            "!!! WARNING: SANDBOX_INSECURE_DEV is enabled. RatchetGuard verification is bypassed."
+        );
     }
 
     let _ = sandbox_kernel::tmux::TmuxManager::reap_orphaned_tmux_sessions();
@@ -57,8 +59,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let canary_mgr = Arc::new(Mutex::new(CanaryManager::new()));
 
-    // Health is intentionally unauthenticated and contains no sensitive data.
-    // Docker lifecycle uses it only to determine whether the daemon is alive.
     let health_router = Router::new()
         .route("/health", get(handle_health))
         .layer(Extension(canary_mgr.clone()));
@@ -91,7 +91,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/arm_canary", post(routes::canary::handle_arm_canary))
         .route("/canary_status", get(routes::canary::handle_canary_status))
         .route("/http_probe", post(routes::probe::handle_http_probe))
-        .route("/browser_audit", post(routes::browser::handle_browser_audit))
+        .route(
+            "/browser_audit",
+            post(routes::browser::handle_browser_audit),
+        )
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             ratchet_auth_middleware,
