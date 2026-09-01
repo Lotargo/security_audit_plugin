@@ -63,11 +63,7 @@ fn url_matches_scope(url: &reqwest::Url, allowed_hosts: &HashSet<String>) -> boo
 pub async fn handle_http_probe(
     Json(payload): Json<ProbeRequest>,
 ) -> Result<Json<ProbeResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let method_str = payload
-        .method
-        .as_deref()
-        .unwrap_or("GET")
-        .to_uppercase();
+    let method_str = payload.method.as_deref().unwrap_or("GET").to_uppercase();
     let timeout_duration = Duration::from_secs(payload.timeout_secs.unwrap_or(15));
     let allowed_hosts = normalize_allowed_hosts(payload.allowed_hosts.clone());
 
