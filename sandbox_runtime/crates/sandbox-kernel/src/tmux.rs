@@ -4,7 +4,7 @@ use thiserror::Error;
 #[allow(unused_imports)]
 use tracing::{error, info, warn};
 
-use crate::privilege::audit_exec_identity;
+use crate::privilege::configured_audit_exec_identity;
 
 #[derive(Error, Debug)]
 pub enum TmuxError {
@@ -64,8 +64,9 @@ impl TmuxManager {
     }
 
     /// Creates a root-owned tmux control session whose pane shell is explicitly demoted
-    /// to the audit UID/GID. The agent can interact with the pane, but cannot access the
-    /// root tmux control socket or inherit the daemon's NET_ADMIN capability.
+    /// when the sandbox runtime provides AUDIT_EXEC_UID/GID. Host-side tests omit those
+    /// variables and already execute as an unprivileged user, so no impossible UID switch
+    /// is attempted there.
     pub fn start_session(
         session_name: &str,
         initial_command: Option<&str>,
@@ -74,11 +75,13 @@ impl TmuxManager {
 
         #[cfg(target_os = "linux")]
         {
-            let (uid, gid) = audit_exec_identity();
-            let pane_shell = format!(
-                "exec setpriv --reuid={} --regid={} --clear-groups --no-new-privs -- sh",
-                uid, gid
-            );
+            let pane_shell = match configured_audit_exec_identity() {
+                Some((uid, gid)) => format!(
+                    "exec setpriv --reuid={} --regid={} --clear-groups --no-new-privs -- sh",
+                    uid, gid
+                ),
+                None => "exec sh".to_string(),
+            };
 
             let status_res = Command::new("tmux")
                 .args([
