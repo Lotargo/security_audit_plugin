@@ -112,12 +112,10 @@ pub async fn handle_http_probe(
         if url_matches_scope(attempt.url(), &redirect_hosts) {
             attempt.follow()
         } else {
+            let blocked_url = attempt.url().to_string();
             attempt.error(IoError::new(
                 ErrorKind::PermissionDenied,
-                format!(
-                    "redirect target is outside active RoE scope: {}",
-                    attempt.url()
-                ),
+                format!("redirect target is outside active RoE scope: {blocked_url}"),
             ))
         }
     });
