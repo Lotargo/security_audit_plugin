@@ -70,7 +70,7 @@ describeDocker('live Docker host-to-sandbox roundtrip', () => {
     const result = await bridge.exec('printf CONTROL_PLANE_OK');
     expect(result.exit_code).toBe(0);
     expect(result.stdout).toContain('CONTROL_PLANE_OK');
-  });
+  }, 30_000);
 
   it('signs GET path+query identically on host and daemon', async () => {
     await bridge.startBackground('printf QUERY_SIGNING_OK; sleep 1', 'ci_query_signing');
