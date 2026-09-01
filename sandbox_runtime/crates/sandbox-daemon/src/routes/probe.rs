@@ -129,7 +129,7 @@ pub async fn handle_http_probe(
 
     // Check for WAF hints
     let mut waf_hints = Vec::new();
-    for (k, _) in &resp_headers {
+    for k in resp_headers.keys() {
         let k_lower = k.to_lowercase();
         if k_lower.starts_with("cf-") {
             waf_hints.push("Cloudflare".to_string());
