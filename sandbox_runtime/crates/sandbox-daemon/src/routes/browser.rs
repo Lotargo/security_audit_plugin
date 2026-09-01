@@ -19,7 +19,11 @@ fn has_scope_hosts(config: &Value) -> bool {
     config
         .get("allowed_hosts")
         .and_then(Value::as_array)
-        .is_some_and(|hosts| hosts.iter().any(|host| host.as_str().is_some_and(|v| !v.trim().is_empty())))
+        .is_some_and(|hosts| {
+            hosts
+                .iter()
+                .any(|host| host.as_str().is_some_and(|v| !v.trim().is_empty()))
+        })
 }
 
 pub async fn handle_browser_audit(
@@ -119,7 +123,8 @@ mod tests {
 
     #[test]
     fn proxied_browser_requires_scope_hosts() {
-        let config = serde_json::json!({"url": "https://example.com", "proxy": "socks5://127.0.0.1:9050"});
+        let config =
+            serde_json::json!({"url": "https://example.com", "proxy": "socks5://127.0.0.1:9050"});
         assert!(has_proxy(&config));
         assert!(!has_scope_hosts(&config));
 
