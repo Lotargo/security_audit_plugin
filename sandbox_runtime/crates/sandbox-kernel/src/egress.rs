@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "linux")]
+use std::process::Command;
 use thiserror::Error;
-use tracing::info;
+#[allow(unused_imports)]
+use tracing::{error, info, warn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

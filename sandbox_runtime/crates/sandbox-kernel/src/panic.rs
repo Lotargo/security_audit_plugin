@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use thiserror::Error;
 use tracing::{error, info};

@@ -1,5 +1,8 @@
+#[cfg(target_os = "linux")]
+use std::process::Command;
 use thiserror::Error;
-use tracing::info;
+#[allow(unused_imports)]
+use tracing::{error, info};
 
 #[derive(Error, Debug)]
 pub enum TmuxError {
