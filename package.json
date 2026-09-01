@@ -1,0 +1,63 @@
+{
+  "name": "@security-audit/plugin",
+  "version": "0.3.0",
+  "description": "Comprehensive Security Audit Plugin with isolated Docker sandbox, Rust kernel, stealth browser, Tor routing and 19 standardized skills.",
+  "author": "Lotargo & Antigravity",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "bin": {
+    "security-audit": "./bin/cli.js",
+    "security-audit-plugin": "./bin/cli.js"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "skills",
+    "plugins",
+    "sandbox_runtime",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "start": "node bin/cli.js mcp",
+    "doctor": "node bin/cli.js doctor",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "colorette": "^2.0.20",
+    "commander": "^13.1.0",
+    "dotenv": "^16.4.7",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.7"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "security",
+    "audit",
+    "mcp",
+    "antigravity",
+    "opencode",
+    "claude-code",
+    "codex",
+    "dast",
+    "sast",
+    "sarif",
+    "tor",
+    "stealth-browser",
+    "sandbox"
+  ]
+}

@@ -385,20 +385,20 @@ security_audit_plugin/
 - [x] Настроить сервис `tor` внутри контейнера (`torrc` с ControlPort `9051`).
 - [x] Написать multi-stage `sandbox_runtime/Dockerfile` и `entrypoint.sh`.
 
-### [ ] [Этап 3: TypeScript MCP Server, Ratchet Bridge & SARIF Builder](./plan/STAGE_3_HOST_MCP_BRIDGE.md)
+### [x] [Этап 3: TypeScript MCP Server, Ratchet Bridge & SARIF Builder](./plan/STAGE_3_HOST_MCP_BRIDGE.md)
 *Детальный план: [`plan/STAGE_3_HOST_MCP_BRIDGE.md`](./plan/STAGE_3_HOST_MCP_BRIDGE.md)*
-- [ ] Настроить TypeScript проект (`package.json`, `tsconfig.json`).
-- [ ] Реализовать `src/mcp/security/ratchet_bridge.ts` (Ed25519, ротация сессий 15–30с, морфинг конвертов).
-- [ ] Реализовать модули безопасности хоста: `jail.ts` (Path Traversal guard), `redaction.ts` (маскирование секретов).
-- [ ] Реализовать `src/sarif/builder.ts` для генерации отчетов OASIS SARIF v2.1.0.
-- [ ] Реализовать `src/docker/runner.ts` (жизненный цикл контейнера) и `src/mcp/bridge.ts`.
-- [ ] Зарегистрировать все 12 MCP-инструментов в `src/mcp/tools/` и STDIO сервер в `src/mcp/server.ts`.
+- [x] Настроить TypeScript проект (`package.json`, `tsconfig.json`).
+- [x] Реализовать `src/mcp/security/ratchet_bridge.ts` (Ed25519, ротация сессий 15–30с, морфинг конвертов).
+- [x] Реализовать модули безопасности хоста: `jail.ts` (Path Traversal guard), `redaction.ts` (маскирование секретов).
+- [x] Реализовать `src/sarif/builder.ts` для генерации отчетов OASIS SARIF v2.1.0.
+- [x] Реализовать `src/docker/runner.ts` (жизненный цикл контейнера) и `src/mcp/bridge.ts`.
+- [x] Зарегистрировать все 12 MCP-инструментов в `src/mcp/tools/` и STDIO сервер в `src/mcp/server.ts`.
 
-### [ ] [Этап 4: NPM CLI, Packaging & Manifests (AGY, OpenCode)](./plan/STAGE_4_NPM_CLI_AND_PACKAGING.md)
+### [x] [Этап 4: NPM CLI, Packaging & Manifests (AGY, OpenCode)](./plan/STAGE_4_NPM_CLI_AND_PACKAGING.md)
 *Детальный план: [`plan/STAGE_4_NPM_CLI_AND_PACKAGING.md`](./plan/STAGE_4_NPM_CLI_AND_PACKAGING.md)*
-- [ ] Написать CLI роутер `bin/cli.js` (`mcp`, `install-skills`, `doctor`, `reset-sandbox`).
-- [ ] Создать манифесты `plugins/agy/plugin.json`, `plugins/agy/mcp_config.json` и `plugins/opencode/opencode.json`.
-- [ ] Настроить `package.json` и скрипты сборки.
+- [x] Написать CLI роутер `bin/cli.js` (`mcp`, `install-skills`, `doctor`, `reset-sandbox`).
+- [x] Создать манифесты `plugins/agy/plugin.json`, `plugins/agy/mcp_config.json` и `plugins/opencode/opencode.json`.
+- [x] Настроить `package.json` и скрипты сборки.
 
 ### [ ] [Этап 5: Сквозное тестирование и валидация безопасности](./plan/STAGE_5_TESTING_AND_VALIDATION.md)
 *Детальный план: [`plan/STAGE_5_TESTING_AND_VALIDATION.md`](./plan/STAGE_5_TESTING_AND_VALIDATION.md)*

@@ -1,0 +1,13 @@
+{
+  "name": "security-audit-plugin",
+  "version": "0.3.0",
+  "description": "Comprehensive Security Audit Plugin with isolated Docker sandbox, Rust kernel, stealth browser, Tor routing, and 19 standardized skills.",
+  "author": "Lotargo & Antigravity",
+  "skills": "../../skills",
+  "mcpServers": {
+    "security-audit-sandbox": {
+      "command": "node",
+      "args": ["${pluginDir}/../../bin/cli.js", "mcp"]
+    }
+  }
+}

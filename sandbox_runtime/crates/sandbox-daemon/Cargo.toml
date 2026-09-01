@@ -19,6 +19,7 @@ chacha20poly1305 = { version = "0.10", features = ["alloc"] }
 zeroize = { version = "1.8", features = ["derive"] }
 hex = "0.4"
 base64 = "0.22"
+sha2 = "0.10"
 sandbox-kernel = { path = "../sandbox-kernel" }
 reqwest = { version = "0.12", features = ["json", "socks"] }
 

@@ -133,26 +133,10 @@ impl RatchetAuthState {
 }
 
 fn ring_sha256(data: &[u8]) -> [u8; 32] {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::Hasher;
-    // Simple deterministic hash representation for signing verification message
-    // In production crypto envelope this is SHA256
-    let mut hasher = DefaultHasher::new();
-    hasher.write(data);
-    let h1 = hasher.finish();
-    hasher.write(&[0xFF, 0xAA]);
-    let h2 = hasher.finish();
-    hasher.write(&[0x11, 0x22]);
-    let h3 = hasher.finish();
-    hasher.write(&[0x77, 0x88]);
-    let h4 = hasher.finish();
-
-    let mut out = [0u8; 32];
-    out[0..8].copy_from_slice(&h1.to_le_bytes());
-    out[8..16].copy_from_slice(&h2.to_le_bytes());
-    out[16..24].copy_from_slice(&h3.to_le_bytes());
-    out[24..32].copy_from_slice(&h4.to_le_bytes());
-    out
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hasher.finalize().into()
 }
 
 /// Axum Middleware function for RatchetGuard envelope verification

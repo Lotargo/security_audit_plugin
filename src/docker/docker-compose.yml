@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  security-audit-sandbox:
+    image: security-audit-sandbox:latest
+    container_name: security-audit-sandbox
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+    ports:
+      - "127.0.0.1:9999:9999"
+    volumes:
+      - ./:/workspace:rw
+    environment:
+      - HOST_PUBKEY_HEX=${HOST_PUBKEY_HEX}
+      - RUST_LOG=info
+    restart: unless-stopped

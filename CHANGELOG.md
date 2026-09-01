@@ -10,6 +10,41 @@
 
 ---
 
+## [0.3.0] - 2026-09-01 (Stage 3 & 4: TypeScript Host MCP Server, Ratchet Bridge, SARIF Builder, CLI & Manifests)
+
+### Added
+- Инициализирован хостовый проект TypeScript (`package.json`, `tsconfig.json`) со строгой типизацией и сборкой в ESM.
+- Реализован криптографический мост `src/mcp/security/ratchet_bridge.ts`:
+  - Генерация ключевой пары Ed25519 хоста;
+  - Подпись каждого RPC-запроса (`X-Signature-Host`, `X-Ratchet-Epoch`, `X-Nonce`);
+  - Скользящий рэтчет с микро-ротацией эпох (окно 30 сек);
+  - Защита от Replay-атак и затирание временных буферов памяти.
+- Реализованы модули хостовой безопасности:
+  - `src/mcp/security/jail.ts`: строгий JailGuard для изоляции путей рабочей области и предотвращения Path Traversal и Symlink-атак;
+  - `src/mcp/security/redaction.ts`: маскирование чувствительных секретов (JWT, Bearer, API-ключи AWS/OpenAI/GitHub, приватные ключи SSH/RSA, пароли и куки).
+- Реализован движок отчетов OASIS SARIF v2.1.0 (`src/sarif/`):
+  - Полная типизация спецификации SARIF v2.1.0 (`types.ts`);
+  - Построитель отчетов `SarifReportBuilder` (`builder.ts`) с авто-регистрацией правил, скорингом CVSS v3.1, таксономиями CWE/OWASP/MITRE и генератором Markdown сводок.
+- Реализован контроллер жизненного цикла Docker-песочницы `src/docker/runner.ts` (запуск с монтированием `/workspace`, лимитами памяти/pids, health check и Hard Reset).
+- Реализован клиент связи `src/mcp/bridge.ts` для вызова всех HTTP-эндпоинтов Rust демона с автоматической криптографической подписью.
+- Зарегистрированы и реализованы все 12 MCP-инструментов песочницы (`src/mcp/tools/`):
+  - `sandbox_set_scope`, `sandbox_rotate_tor_ip`, `sandbox_exec`, `sandbox_interactive_input`, `sandbox_start_background`, `sandbox_poll_logs`, `sandbox_browser_audit`, `sandbox_bundle_extract`, `sandbox_http_probe`, `sandbox_kill_switch`, `sandbox_reset`, `sandbox_fs_read`, `sandbox_fs_write`.
+- Реализован MCP STDIO сервер `src/mcp/server.ts` на базе `@modelcontextprotocol/sdk`.
+- Реализован полнофункциональный CLI интерфейс (`bin/cli.js`, `src/cli/`):
+  - `security-audit mcp`: запуск STDIO MCP сервера;
+  - `security-audit doctor`: диагностика Docker, портов, образов и окружения;
+  - `security-audit install-skills`: экспорт 19 скиллов в агентские среды (`agy`, `opencode`, `claude`, `custom`);
+  - `security-audit start-sandbox`, `stop-sandbox`, `reset-sandbox`: управление контейнером.
+- Сгенерированы нативные манифесты плагина:
+  - Google Antigravity (`plugins/agy/plugin.json`, `plugins/agy/mcp_config.json`);
+  - OpenCode (`plugins/opencode/opencode.json`).
+- Разработан набор модульных тестов Vitest (`tests/jail.test.ts`, `tests/redaction.test.ts`, `tests/sarif.test.ts`, `tests/ratchet.test.ts`) — 19/19 тестов успешно пройдены.
+
+### Changed
+- Синхронизирован алгоритм хеширования SHA-256 между Rust `sandbox-daemon` (`sha2::Sha256`) и Node.js `RatchetBridge` (`crypto.createHash('sha256')`).
+
+---
+
 ## [0.2.0] - 2026-09-01 (Stage 2: Docker Sandbox Runtime — Rust Kernel, Node.js Stealth Browser, Tor & Deception)
 
 ### Added

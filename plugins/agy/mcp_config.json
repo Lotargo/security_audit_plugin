@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "security-audit-sandbox": {
+      "command": "node",
+      "args": ["${pluginDir}/../../bin/cli.js", "mcp"],
+      "env": {
+        "PORT": "9999",
+        "RUST_LOG": "info"
+      }
+    }
+  }
+}
