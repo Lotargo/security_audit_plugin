@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
@@ -11,32 +12,66 @@ const describeDocker = enabled ? describe : describe.skip;
 describeDocker('live Docker host-to-sandbox roundtrip & escape-regression suite', () => {
   let bridge: SandboxBridge;
   let workspace: string;
-  let hostProbeServer: http.Server;
+  let killSwitchPeerIp: string;
   const port = 19099;
-  const hostProbePort = 19101;
+  const killSwitchPeerPort = 19101;
+  const killSwitchPeerName = `security-audit-killswitch-peer-${process.pid}`;
 
   beforeAll(async () => {
     workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'security-audit-docker-e2e-'));
-
-    hostProbeServer = http.createServer((_req, res) => {
-      res.writeHead(200, { 'content-type': 'text/plain' });
-      res.end('HOST_PROBE_OK');
-    });
-    await new Promise<void>((resolve, reject) => {
-      hostProbeServer.once('error', reject);
-      hostProbeServer.listen(hostProbePort, '0.0.0.0', () => resolve());
-    });
-
     bridge = new SandboxBridge({ workspaceRoot: workspace, hostPort: port });
     await bridge.ensureRuntime();
+
+    try {
+      execFileSync('docker', ['rm', '-f', killSwitchPeerName], { stdio: 'ignore' });
+    } catch {
+      // Peer did not exist from a previous interrupted run.
+    }
+
+    const peerScript =
+      "require('http').createServer((_req,res)=>{res.writeHead(200,{'content-type':'text/plain'});res.end('KILL_SWITCH_PEER_OK');}).listen(19101,'0.0.0.0')";
+    execFileSync(
+      'docker',
+      [
+        'run',
+        '-d',
+        '--rm',
+        '--name',
+        killSwitchPeerName,
+        '--entrypoint',
+        'node',
+        'security-audit-sandbox:latest',
+        '-e',
+        peerScript,
+      ],
+      { stdio: 'pipe' }
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    killSwitchPeerIp = execFileSync(
+      'docker',
+      [
+        'inspect',
+        '-f',
+        '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}',
+        killSwitchPeerName,
+      ],
+      { encoding: 'utf8' }
+    ).trim();
+
+    if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(killSwitchPeerIp)) {
+      throw new Error(`Failed to resolve deterministic Docker peer IP: ${killSwitchPeerIp}`);
+    }
   }, 60_000);
 
-  afterAll(async () => {
+  afterAll(() => {
     try {
       bridge?.getDocker().stop();
     } finally {
-      if (hostProbeServer) {
-        await new Promise<void>((resolve) => hostProbeServer.close(() => resolve()));
+      try {
+        execFileSync('docker', ['rm', '-f', killSwitchPeerName], { stdio: 'ignore' });
+      } catch {
+        // Peer already stopped or was removed by Docker.
       }
       if (workspace) fs.rmSync(workspace, { recursive: true, force: true });
     }
@@ -168,7 +203,6 @@ describeDocker('live Docker host-to-sandbox roundtrip & escape-regression suite'
     });
 
     it('blocks arbitrary public IPs outside the active remote scope (Point 7)', async () => {
-      // With scope locked strictly to 93.184.216.34:
       const blocked1 = await bridge.exec(
         'curl -fsS --connect-timeout 2 --max-time 3 http://1.1.1.1/ >/dev/null'
       );
@@ -242,26 +276,22 @@ describeDocker('live Docker host-to-sandbox roundtrip & escape-regression suite'
     });
 
     it('rejects cross-host redirects in http_probe fail-closed (Point 12)', async () => {
-      // Start a lightweight redirect service on container loopback
       await bridge.startBackground(
         `node -e "const http = require('http'); http.createServer((req, res) => { if (req.url === '/redirect-cross') { res.writeHead(302, { Location: 'http://1.1.1.1/stolen' }); res.end(); } else if (req.url === '/redirect-same') { res.writeHead(302, { Location: 'http://127.0.0.1:18080/ok' }); res.end(); } else { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('OK_LANDED'); } }).listen(18080);"`,
         'ci_redirect_srv'
       );
       await new Promise((resolve) => setTimeout(resolve, 600));
 
-      // Provision scope for the mock endpoint
       await bridge.setScope({
         mode: 'remote',
         targets: ['127.0.0.1'],
         arm_canaries: false,
       });
 
-      // Same-host redirect must be permitted
       const sameHostRes = await bridge.httpProbe({ url: 'http://127.0.0.1:18080/redirect-same' });
       expect(sameHostRes.status).toBe(200);
       expect(sameHostRes.body).toContain('OK_LANDED');
 
-      // Cross-host redirect to an out-of-scope host (1.1.1.1) must fail-closed
       await expect(
         bridge.httpProbe({ url: 'http://127.0.0.1:18080/redirect-cross' })
       ).rejects.toThrow();
@@ -280,7 +310,6 @@ describeDocker('live Docker host-to-sandbox roundtrip & escape-regression suite'
       expect(torScope.tor_enabled).toBe(true);
       expect(torScope.allowed_cidrs).toEqual([]);
 
-      // Agent process must be blocked from querying port 53 DNS directly
       const dnsQuery = await bridge.exec(
         'getent hosts example.com 2>/dev/null || nslookup example.com 127.0.0.11 2>/dev/null || curl -fsS --connect-timeout 2 http://93.184.216.34 >/dev/null'
       );
@@ -290,38 +319,31 @@ describeDocker('live Docker host-to-sandbox roundtrip & escape-regression suite'
 
   describe('Emergency Kill Switch & Hard Reset Lifecycle (Points 14, 15)', () => {
     it('proves killSwitch transitions a previously reachable scoped destination to fail-closed (Point 14)', async () => {
-      // Use a deterministic server on the Docker host rather than relying on public Internet
-      // availability. The container default gateway is outside loopback, so the kill-switch output
-      // policy must actually block this connection after the transition.
-      const gatewayResult = await bridge.exec("ip route show default | awk 'NR==1 {print $3}'");
-      expect(gatewayResult.exit_code).toBe(0);
-      const gateway = gatewayResult.stdout.trim();
-      expect(gateway).toMatch(/^\d{1,3}(?:\.\d{1,3}){3}$/);
-
       const directScope = await bridge.setScope({
         mode: 'remote',
-        targets: [gateway],
+        targets: [killSwitchPeerIp],
         denied_cidrs: [],
         arm_canaries: false,
       });
       expect(directScope.status).toBe('success');
 
+      const peerUrl = `http://${killSwitchPeerIp}:${killSwitchPeerPort}/`;
       const egressBeforeKill = await bridge.exec(
-        `curl -fsS --connect-timeout 2 --max-time 3 http://${gateway}:${hostProbePort}/`
+        `curl -fsS --connect-timeout 2 --max-time 3 ${peerUrl}`
       );
       expect(egressBeforeKill.exit_code).toBe(0);
-      expect(egressBeforeKill.stdout).toContain('HOST_PROBE_OK');
+      expect(egressBeforeKill.stdout).toContain('KILL_SWITCH_PEER_OK');
 
       const killResult = await bridge.killSwitch('Adversarial validation test');
       expect(killResult.status).toBe('isolated');
       expect(killResult.is_isolated).toBe(true);
 
       const egressAfterKill = await bridge.exec(
-        `curl -fsS --connect-timeout 2 --max-time 3 http://${gateway}:${hostProbePort}/`
+        `curl -fsS --connect-timeout 2 --max-time 3 ${peerUrl}`
       );
       expect(egressAfterKill.exit_code).not.toBe(0);
 
-      await expect(bridge.httpProbe({ url: `http://${gateway}:${hostProbePort}/` })).rejects.toThrow(
+      await expect(bridge.httpProbe({ url: peerUrl })).rejects.toThrow(
         'require an explicit remote or hybrid scope'
       );
     }, 20_000);
@@ -333,7 +355,6 @@ describeDocker('live Docker host-to-sandbox roundtrip & escape-regression suite'
       const isHealthy = await bridge.getDocker().checkHealth();
       expect(isHealthy).toBe(true);
 
-      // Fresh container starts with bootstrap local isolation
       const initialAfterReset = await bridge.exec(
         'curl -fsS --connect-timeout 2 --max-time 3 http://93.184.216.34 >/dev/null'
       );
