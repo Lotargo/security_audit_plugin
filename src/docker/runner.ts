@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -14,22 +14,16 @@ export interface DockerRunnerOptions {
   hostPort?: number;
   workspacePath?: string;
   hostPubkeyHex?: string;
+  sessionKeyHex?: string;
   memoryLimit?: string;
   pidsLimit?: number;
 }
 
-/**
- * Finds the bundled sandbox_runtime directory inside the installed package or development workspace
- */
 export function findSandboxRuntimeDir(): string | null {
   const currentDir = path.dirname(fileURLToPath(import.meta.url));
-
   const candidates = [
-    // 1. From dist/src/docker/ (installed npm package)
     path.resolve(currentDir, '../../../sandbox_runtime'),
-    // 2. From src/docker/ (ts-node / dev / vitest)
     path.resolve(currentDir, '../../sandbox_runtime'),
-    // 3. Fallback to process.cwd()
     path.resolve(process.cwd(), 'sandbox_runtime'),
   ];
 
@@ -38,14 +32,9 @@ export function findSandboxRuntimeDir(): string | null {
       return candidate;
     }
   }
-
   return null;
 }
 
-/**
- * DockerRunner manages the lifecycle of the isolated security sandbox container,
- * with automatic image pulling from GHCR and fallback build from bundled runtime sources.
- */
 export class DockerRunner {
   private containerName: string;
   private imageName: string;
@@ -53,6 +42,7 @@ export class DockerRunner {
   private hostPort: number;
   private workspacePath: string;
   private hostPubkeyHex?: string;
+  private sessionKeyHex?: string;
   private memoryLimit: string;
   private pidsLimit: number;
 
@@ -63,65 +53,61 @@ export class DockerRunner {
     this.hostPort = options.hostPort || 9999;
     this.workspacePath = options.workspacePath || process.cwd();
     this.hostPubkeyHex = options.hostPubkeyHex;
+    this.sessionKeyHex = options.sessionKeyHex;
     this.memoryLimit = options.memoryLimit || '4g';
     this.pidsLimit = options.pidsLimit || 256;
   }
 
-  /**
-   * Checks if Docker daemon is running and reachable
-   */
+  private docker(args: string[], inherit = false): Buffer {
+    return execFileSync('docker', args, {
+      stdio: inherit ? 'inherit' : 'pipe',
+      maxBuffer: 16 * 1024 * 1024,
+    }) as Buffer;
+  }
+
   public isDockerAvailable(): boolean {
     try {
-      execSync('docker info --format "{{.ServerVersion}}"', { stdio: 'pipe' });
+      this.docker(['info', '--format', '{{.ServerVersion}}']);
       return true;
     } catch {
       return false;
     }
   }
 
-  /**
-   * Checks if the sandbox container is currently running
-   */
   public isRunning(): boolean {
     try {
-      const out = execSync(`docker ps --filter "name=${this.containerName}" --format "{{.Names}}"`, {
-        stdio: 'pipe',
-      })
+      const out = this.docker([
+        'ps',
+        '--filter',
+        `name=^/${this.containerName}$`,
+        '--format',
+        '{{.Names}}',
+      ])
         .toString()
         .trim();
-      return out.includes(this.containerName);
+      return out === this.containerName;
     } catch {
       return false;
     }
   }
 
-  /**
-   * Checks if a Docker image is present in local cache
-   */
   public isImageAvailable(imageName?: string): boolean {
     const target = imageName || this.imageName;
     try {
-      const out = execSync(`docker images -q "${target}"`, { stdio: 'pipe' }).toString().trim();
-      if (out.length > 0) return true;
-
-      // Also check if the registry image is present
-      const regOut = execSync(`docker images -q "${this.registryImage}"`, { stdio: 'pipe' }).toString().trim();
-      return regOut.length > 0;
+      if (this.docker(['images', '-q', target]).toString().trim()) return true;
+      return Boolean(this.docker(['images', '-q', this.registryImage]).toString().trim());
     } catch {
       return false;
     }
   }
 
-  /**
-   * Pulls the pre-built sandbox image from public registry (GHCR / Docker Hub)
-   */
   public pullImage(registryImage?: string): boolean {
     const target = registryImage || this.registryImage;
     console.error(`[*] Pulling sandbox image from registry: ${target}...`);
     try {
-      execSync(`docker pull ${target}`, { stdio: 'inherit' });
+      this.docker(['pull', target], true);
       if (target !== this.imageName) {
-        execSync(`docker tag ${target} ${this.imageName}`, { stdio: 'pipe' });
+        this.docker(['tag', target, this.imageName]);
       }
       return true;
     } catch (err: any) {
@@ -130,9 +116,6 @@ export class DockerRunner {
     }
   }
 
-  /**
-   * Builds the sandbox image locally from the bundled sandbox_runtime directory
-   */
   public buildImage(customRuntimePath?: string): boolean {
     const runtimeDir = customRuntimePath || findSandboxRuntimeDir();
     if (!runtimeDir) {
@@ -142,7 +125,7 @@ export class DockerRunner {
 
     console.error(`[*] Building sandbox container locally from: ${runtimeDir}...`);
     try {
-      execSync(`docker build -t ${this.imageName} "${runtimeDir}"`, { stdio: 'inherit' });
+      this.docker(['build', '-t', this.imageName, runtimeDir], true);
       return true;
     } catch (err: any) {
       console.error(`[!] Docker build failed: ${err.message}`);
@@ -150,63 +133,68 @@ export class DockerRunner {
     }
   }
 
-  /**
-   * Ensures the sandbox image is available locally (checks cache -> pulls -> builds fallback)
-   */
   public async ensureImageAvailable(): Promise<void> {
-    if (this.isImageAvailable()) {
-      return;
-    }
+    if (this.isImageAvailable()) return;
 
     console.error(`[*] Sandbox Docker image '${this.imageName}' not found locally.`);
-
-    // 1. Primary path: Pull from public container registry (GHCR)
-    const pulled = this.pullImage();
-    if (pulled) {
+    if (this.pullImage()) {
       console.error(`[✔] Successfully downloaded sandbox image from ${this.registryImage}`);
       return;
     }
 
-    // 2. Fallback path: Build locally from bundled source
-    console.error(`[*] Registry pull failed or offline. Attempting local Docker build fallback...`);
-    const built = this.buildImage();
-    if (built) {
+    console.error('[*] Registry pull failed or offline. Attempting local Docker build fallback...');
+    if (this.buildImage()) {
       console.error(`[✔] Successfully built sandbox image locally: ${this.imageName}`);
       return;
     }
 
     throw new Error(
-      `Sandbox Docker image '${this.imageName}' is unavailable. Automatic registry pull and local build both failed. Ensure Docker is running and Internet access is available.`
+      `Sandbox Docker image '${this.imageName}' is unavailable. Registry pull and local build both failed.`
     );
   }
 
-  /**
-   * Starts the sandbox container if not already active
-   */
-  public async ensureRunning(hostPubkeyHex?: string): Promise<void> {
-    if (hostPubkeyHex) {
-      this.hostPubkeyHex = hostPubkeyHex;
+  private hasMatchingTrustMaterial(): boolean {
+    if (!this.hostPubkeyHex || !this.sessionKeyHex || !this.isRunning()) return false;
+    try {
+      const envDump = this.docker([
+        'inspect',
+        '--format',
+        '{{range .Config.Env}}{{println .}}{{end}}',
+        this.containerName,
+      ]).toString();
+      return (
+        envDump.includes(`HOST_PUBKEY_HEX=${this.hostPubkeyHex}`) &&
+        envDump.includes(`BRIDGE_SESSION_KEY_HEX=${this.sessionKeyHex}`)
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  public async ensureRunning(hostPubkeyHex?: string, sessionKeyHex?: string): Promise<void> {
+    if (hostPubkeyHex) this.hostPubkeyHex = hostPubkeyHex;
+    if (sessionKeyHex) this.sessionKeyHex = sessionKeyHex;
+
+    if (!this.hostPubkeyHex || !this.sessionKeyHex) {
+      throw new Error(
+        'Authenticated sandbox startup requires both HOST_PUBKEY_HEX and BRIDGE_SESSION_KEY_HEX'
+      );
     }
 
     if (this.isRunning()) {
       const healthy = await this.checkHealth(1000);
-      if (healthy) return;
+      if (healthy && this.hasMatchingTrustMaterial()) return;
+      // Never reuse a container that was bootstrapped by another MCP session/keypair.
+      this.stop();
     }
 
-    // Ensure Docker daemon is up
     if (!this.isDockerAvailable()) {
-      throw new Error(
-        'Docker daemon is not running or inaccessible. Please start Docker Desktop or dockerd to run the security audit sandbox.'
-      );
+      throw new Error('Docker daemon is not running or inaccessible.');
     }
 
-    // Ensure image is downloaded or built
     await this.ensureImageAvailable();
-
-    // Clean up any stale or exited container
     this.stop();
 
-    // Spawn docker container
     const args = [
       'run',
       '-d',
@@ -220,59 +208,49 @@ export class DockerRunner {
       `127.0.0.1:${this.hostPort}:9999`,
       '-v',
       `${this.workspacePath}:/workspace:rw`,
+      '-e',
+      `HOST_PUBKEY_HEX=${this.hostPubkeyHex}`,
+      '-e',
+      `BRIDGE_SESSION_KEY_HEX=${this.sessionKeyHex}`,
+      this.imageName,
     ];
 
-    if (this.hostPubkeyHex) {
-      args.push('-e', `HOST_PUBKEY_HEX=${this.hostPubkeyHex}`);
-    }
-
-    args.push(this.imageName);
-
     try {
-      execSync(`docker ${args.join(' ')}`, { stdio: 'pipe' });
+      this.docker(args);
     } catch (err: any) {
       throw new Error(`Failed to start Docker sandbox container: ${err.message}`);
     }
 
-    // Wait for health check
-    const isUp = await this.waitForHealth(10000);
-    if (!isUp) {
-      throw new Error(`Sandbox container started but health check failed at http://127.0.0.1:${this.hostPort}`);
+    if (!(await this.waitForHealth(15000))) {
+      this.stop();
+      throw new Error(`Sandbox container started but /health failed at 127.0.0.1:${this.hostPort}`);
     }
   }
 
-  /**
-   * Performs an immediate Hard Reset: destroys compromised container and spawns clean image
-   */
-  public async hardReset(hostPubkeyHex?: string): Promise<void> {
+  public async hardReset(hostPubkeyHex?: string, sessionKeyHex?: string): Promise<void> {
     this.stop();
-    await this.ensureRunning(hostPubkeyHex);
+    await this.ensureRunning(hostPubkeyHex, sessionKeyHex);
   }
 
-  /**
-   * Stops and removes the sandbox container
-   */
   public stop(): void {
     try {
-      execSync(`docker rm -f ${this.containerName}`, { stdio: 'pipe' });
+      this.docker(['rm', '-f', this.containerName]);
     } catch {
-      // Ignore if container did not exist
+      // Container did not exist.
     }
   }
 
-  /**
-   * Single health check probe to sandbox-daemon
-   */
-  public checkHealth(timeoutMs: number = 1000): Promise<boolean> {
+  public checkHealth(timeoutMs = 1000): Promise<boolean> {
     return new Promise((resolve) => {
       const req = http.get(
         {
           host: '127.0.0.1',
           port: this.hostPort,
-          path: '/isolation_status',
+          path: '/health',
           timeout: timeoutMs,
         },
         (res) => {
+          res.resume();
           resolve(res.statusCode === 200);
         }
       );
@@ -284,14 +262,10 @@ export class DockerRunner {
     });
   }
 
-  /**
-   * Polls health check until healthy or timeout
-   */
-  public async waitForHealth(timeoutMs: number = 10000): Promise<boolean> {
+  public async waitForHealth(timeoutMs = 10000): Promise<boolean> {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      const healthy = await this.checkHealth(800);
-      if (healthy) return true;
+      if (await this.checkHealth(800)) return true;
       await new Promise((r) => setTimeout(r, 400));
     }
     return false;

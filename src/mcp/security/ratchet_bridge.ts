@@ -4,7 +4,8 @@ export interface SignedHeaders {
   'x-signature-host': string;
   'x-ratchet-epoch': string;
   'x-nonce': string;
-  'x-aad-binding'?: string;
+  'x-aad-binding': string;
+  'x-payload-encrypted'?: string;
   'content-type': string;
 }
 
@@ -14,39 +15,38 @@ export interface KeyPairHex {
 }
 
 export interface EncryptedEnvelope {
+  algorithm: 'chacha20-poly1305' | 'aes-256-gcm';
   ciphertext: string;
   nonce: string;
   tag: string;
   aad: string;
 }
 
-/**
- * Encrypts arbitrary payload with ChaCha20-Poly1305 (or AES-256-GCM fallback) binding Associated Authenticated Data (AAD)
- */
 export function encryptPayloadWithAad(
   payload: Buffer | string,
   key32: Buffer,
   aad: string | Buffer
 ): EncryptedEnvelope {
+  if (key32.length !== 32) {
+    throw new Error('AEAD key must be exactly 32 bytes');
+  }
+
   const plainBuffer = typeof payload === 'string' ? Buffer.from(payload, 'utf-8') : payload;
   const aadBuffer = typeof aad === 'string' ? Buffer.from(aad, 'utf-8') : aad;
   const nonce = crypto.randomBytes(12);
 
-  // Use chacha20-poly1305 if supported, otherwise aes-256-gcm
-  let algorithm = 'chacha20-poly1305';
+  let algorithm: 'chacha20-poly1305' | 'aes-256-gcm' = 'chacha20-poly1305';
   if (!crypto.getCiphers().includes('chacha20-poly1305')) {
     algorithm = 'aes-256-gcm';
   }
 
   const cipher = crypto.createCipheriv(algorithm, key32, nonce, { authTagLength: 16 } as any);
   (cipher as any).setAAD(aadBuffer);
-
-  const enc1 = cipher.update(plainBuffer);
-  const enc2 = cipher.final();
-  const ciphertext = Buffer.concat([enc1, enc2]);
+  const ciphertext = Buffer.concat([cipher.update(plainBuffer), cipher.final()]);
   const tag = (cipher as any).getAuthTag();
 
   return {
+    algorithm,
     ciphertext: ciphertext.toString('hex'),
     nonce: nonce.toString('hex'),
     tag: tag.toString('hex'),
@@ -54,46 +54,49 @@ export function encryptPayloadWithAad(
   };
 }
 
-/**
- * Decrypts encrypted envelope validating Poly1305/GCM auth tag and AAD
- */
 export function decryptPayloadWithAad(
   ciphertextHex: string,
   nonceHex: string,
   tagHex: string,
   key32: Buffer,
-  aad: string | Buffer
+  aad: string | Buffer,
+  algorithm?: 'chacha20-poly1305' | 'aes-256-gcm'
 ): Buffer {
+  if (key32.length !== 32) {
+    throw new Error('AEAD key must be exactly 32 bytes');
+  }
+
   const cipherBuffer = Buffer.from(ciphertextHex, 'hex');
   const nonce = Buffer.from(nonceHex, 'hex');
   const tag = Buffer.from(tagHex, 'hex');
   const aadBuffer = typeof aad === 'string' ? Buffer.from(aad, 'utf-8') : aad;
 
-  let algorithm = 'chacha20-poly1305';
-  if (!crypto.getCiphers().includes('chacha20-poly1305')) {
-    algorithm = 'aes-256-gcm';
-  }
+  const selectedAlgorithm =
+    algorithm || (crypto.getCiphers().includes('chacha20-poly1305') ? 'chacha20-poly1305' : 'aes-256-gcm');
 
-  const decipher = crypto.createDecipheriv(algorithm, key32, nonce, { authTagLength: 16 } as any);
+  const decipher = crypto.createDecipheriv(selectedAlgorithm, key32, nonce, {
+    authTagLength: 16,
+  } as any);
   (decipher as any).setAAD(aadBuffer);
   (decipher as any).setAuthTag(tag);
 
-  const dec1 = decipher.update(cipherBuffer);
-  const dec2 = decipher.final();
-  return Buffer.concat([dec1, dec2]);
+  return Buffer.concat([decipher.update(cipherBuffer), decipher.final()]);
 }
 
 /**
- * RatchetBridge provides cryptographic signing, AAD envelope verification and epoch tracking
- * for the host-to-sandbox control plane (Ed25519 + ChaCha20-Poly1305 / SHA-256).
+ * Host-side control-plane identity and session crypto.
+ * Ed25519 authenticates every protected request. Non-empty request bodies are additionally
+ * encrypted with a per-MCP-process ChaCha20-Poly1305 session key that is provisioned only
+ * into the matching sandbox instance.
  */
 export class RatchetBridge {
   private hostPublicKey: crypto.KeyObject;
   private hostPrivateKey: crypto.KeyObject;
   private hostPublicKeyHex: string;
+  private sessionKey: Buffer;
   private sessionEpochSeconds: number = 30;
 
-  constructor(customPrivateKeyPem?: string) {
+  constructor(customPrivateKeyPem?: string, sessionKeyHex?: string) {
     if (customPrivateKeyPem) {
       this.hostPrivateKey = crypto.createPrivateKey(customPrivateKeyPem);
       this.hostPublicKey = crypto.createPublicKey(this.hostPrivateKey);
@@ -103,65 +106,87 @@ export class RatchetBridge {
       this.hostPrivateKey = pair.privateKey;
     }
 
-    // Export raw 32-byte Ed25519 public key as hex
     const jwk = this.hostPublicKey.export({ format: 'jwk' });
     if (!jwk.x) {
       throw new Error('Failed to export Ed25519 public key in JWK format');
     }
-    const rawPubBuffer = Buffer.from(jwk.x, 'base64url');
-    this.hostPublicKeyHex = rawPubBuffer.toString('hex');
+    this.hostPublicKeyHex = Buffer.from(jwk.x, 'base64url').toString('hex');
+
+    this.sessionKey = sessionKeyHex ? Buffer.from(sessionKeyHex, 'hex') : crypto.randomBytes(32);
+    if (this.sessionKey.length !== 32) {
+      throw new Error('Bridge session key must be exactly 32 bytes');
+    }
   }
 
-  /**
-   * Returns the raw 32-byte public key as hex for passing to sandbox container (HOST_PUBKEY_HEX)
-   */
   public getPublicKeyHex(): string {
     return this.hostPublicKeyHex;
   }
 
+  public getSessionKeyHex(): string {
+    return this.sessionKey.toString('hex');
+  }
+
   /**
-   * Signs an HTTP request payload for sending to sandbox-daemon with AAD binding
-   * Envelope format: `${method}|${path}|${epoch}|${nonce}|${bodySha256Hex}`
+   * Envelope signature format:
+   * `${method}|${pathAndQuery}|${epoch}|${nonce}|${sha256(transmittedBody)}`
+   * AAD format:
+   * `host_mcp:${method}:${pathAndQuery}:${epoch}`
    */
   public signRequest(
     method: string,
-    path: string,
+    pathAndQuery: string,
     body: string | Buffer = ''
   ): { headers: SignedHeaders; rawBody: Buffer } {
-    const rawBody = typeof body === 'string' ? Buffer.from(body, 'utf-8') : body;
-    const bodySha256 = crypto.createHash('sha256').update(rawBody).digest('hex');
-
+    const plainBody = typeof body === 'string' ? Buffer.from(body, 'utf-8') : body;
+    const normalizedMethod = method.toUpperCase();
     const epoch = Math.floor(Date.now() / 1000).toString();
-    const nonce = crypto.randomBytes(16).toString('hex');
+    const requestNonce = crypto.randomBytes(16).toString('hex');
+    const aadBinding = `host_mcp:${normalizedMethod}:${pathAndQuery}:${epoch}`;
 
-    const aadBinding = `host_mcp:${method.toUpperCase()}:${path}:${epoch}`;
-    const message = `${method.toUpperCase()}|${path}|${epoch}|${nonce}|${bodySha256}`;
+    let rawBody = plainBody;
+    let encryptedAlgorithm: string | undefined;
+
+    if (plainBody.length > 0) {
+      const envelope = encryptPayloadWithAad(plainBody, this.sessionKey, aadBinding);
+      if (envelope.algorithm !== 'chacha20-poly1305') {
+        throw new Error(
+          'This runtime requires ChaCha20-Poly1305 support for host-to-sandbox transport encryption'
+        );
+      }
+      rawBody = Buffer.from(
+        JSON.stringify({
+          algorithm: envelope.algorithm,
+          ciphertext: envelope.ciphertext,
+          nonce: envelope.nonce,
+          tag: envelope.tag,
+        }),
+        'utf-8'
+      );
+      encryptedAlgorithm = envelope.algorithm;
+    }
+
+    const bodySha256 = crypto.createHash('sha256').update(rawBody).digest('hex');
+    const message = `${normalizedMethod}|${pathAndQuery}|${epoch}|${requestNonce}|${bodySha256}`;
     const msgBuffer = Buffer.from(message, 'utf-8');
-
-    const signatureBuffer = crypto.sign(null, msgBuffer, this.hostPrivateKey);
-    const signatureHex = signatureBuffer.toString('hex');
-
-    // Secure wipe temporary message buffer
+    const signatureHex = crypto.sign(null, msgBuffer, this.hostPrivateKey).toString('hex');
     this.zeroize(msgBuffer);
 
     return {
       headers: {
         'x-signature-host': signatureHex,
         'x-ratchet-epoch': epoch,
-        'x-nonce': nonce,
+        'x-nonce': requestNonce,
         'x-aad-binding': aadBinding,
+        ...(encryptedAlgorithm ? { 'x-payload-encrypted': encryptedAlgorithm } : {}),
         'content-type': 'application/json',
       },
       rawBody,
     };
   }
 
-  /**
-   * Verifies an incoming or test envelope
-   */
   public verifySignature(
     method: string,
-    path: string,
+    pathAndQuery: string,
     epoch: string,
     nonce: string,
     body: string | Buffer,
@@ -177,12 +202,16 @@ export class RatchetBridge {
 
     const rawBody = typeof body === 'string' ? Buffer.from(body, 'utf-8') : body;
     const bodySha256 = crypto.createHash('sha256').update(rawBody).digest('hex');
-    const message = `${method.toUpperCase()}|${path}|${epoch}|${nonce}|${bodySha256}`;
+    const message = `${method.toUpperCase()}|${pathAndQuery}|${epoch}|${nonce}|${bodySha256}`;
     const msgBuffer = Buffer.from(message, 'utf-8');
 
     try {
-      const sigBuffer = Buffer.from(signatureHex, 'hex');
-      const valid = crypto.verify(null, msgBuffer, this.hostPublicKey, sigBuffer);
+      const valid = crypto.verify(
+        null,
+        msgBuffer,
+        this.hostPublicKey,
+        Buffer.from(signatureHex, 'hex')
+      );
       this.zeroize(msgBuffer);
       return valid;
     } catch {
@@ -191,9 +220,10 @@ export class RatchetBridge {
     }
   }
 
-  /**
-   * Overwrites sensitive memory buffer with zeros
-   */
+  public destroy(): void {
+    this.zeroize(this.sessionKey);
+  }
+
   public zeroize(buf: Buffer): void {
     buf.fill(0);
   }

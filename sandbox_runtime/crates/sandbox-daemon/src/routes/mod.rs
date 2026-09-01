@@ -1,4 +1,5 @@
 pub mod background;
+pub mod browser;
 pub mod canary;
 pub mod egress;
 pub mod exec;

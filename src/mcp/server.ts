@@ -8,9 +8,6 @@ export interface ServerOptions {
   hostPort?: number;
 }
 
-/**
- * Creates and initializes the Security Audit MCP Server
- */
 export async function createMcpServer(options: ServerOptions = {}): Promise<{
   server: McpServer;
   bridge: SandboxBridge;
@@ -24,29 +21,24 @@ export async function createMcpServer(options: ServerOptions = {}): Promise<{
     version: '0.4.0',
   });
 
-  const bridge = new SandboxBridge({
-    workspaceRoot,
-    hostPort,
-  });
-
-  // Register all 12 sandbox tools
+  const bridge = new SandboxBridge({ workspaceRoot, hostPort });
   registerAllTools(server, bridge);
 
   const start = async () => {
+    // The MCP process owns the ephemeral Ed25519 identity + AEAD session key.
+    // Start or re-key the sandbox before exposing tools to the agent.
+    await bridge.ensureRuntime();
+
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    // Log to stderr so stdout remains clean for MCP JSON-RPC
-    console.error(`[SecurityAuditPlugin] MCP Server connected via STDIO (Workspace: ${workspaceRoot})`);
+    console.error(
+      `[SecurityAuditPlugin] MCP Server connected via STDIO (Workspace: ${workspaceRoot}, sandbox: authenticated)`
+    );
   };
 
-  return {
-    server,
-    bridge,
-    start,
-  };
+  return { server, bridge, start };
 }
 
-// Direct execution entrypoint
 if (process.argv[1] && process.argv[1].endsWith('server.js')) {
   createMcpServer()
     .then((inst) => inst.start())

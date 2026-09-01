@@ -20,7 +20,6 @@ use sandbox_kernel::canary::CanaryManager;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Initialize structured logging
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
@@ -32,39 +31,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Starting Security Audit Sandbox Daemon (Axum/Tokio)...");
 
-    // 2. Read Configuration from Environment
     let port: u16 = std::env::var("PORT")
         .unwrap_or_else(|_| "9999".to_string())
         .parse()
         .unwrap_or(9999);
 
-    let host_pubkey_hex = std::env::var("HOST_PUBKEY").ok();
+    let host_pubkey_hex = std::env::var("HOST_PUBKEY_HEX").ok();
+    let session_key_hex = std::env::var("BRIDGE_SESSION_KEY_HEX").ok();
     let insecure_dev = std::env::var("SANDBOX_INSECURE_DEV")
         .map(|v| v == "1" || v.to_lowercase() == "true")
         .unwrap_or(false);
 
     if insecure_dev {
-        warn!("!!! WARNING: SANDBOX_INSECURE_DEV is enabled. RatchetGuard signature verification bypassed.");
+        warn!("!!! WARNING: SANDBOX_INSECURE_DEV is enabled. RatchetGuard verification is bypassed.");
     }
 
-    // 3. Initialize Shared Kernel Managers & Auth State
     let _ = sandbox_kernel::tmux::TmuxManager::reap_orphaned_tmux_sessions();
 
-    let auth_state = RatchetAuthState::new(host_pubkey_hex.as_deref(), insecure_dev)
-        .expect("Failed to initialize RatchetAuthState");
+    let auth_state = RatchetAuthState::new(
+        host_pubkey_hex.as_deref(),
+        session_key_hex.as_deref(),
+        insecure_dev,
+    )
+    .expect("Failed to initialize RatchetAuthState");
 
     let canary_mgr = Arc::new(Mutex::new(CanaryManager::new()));
 
-    // 4. Build API Routers
+    // Health is intentionally unauthenticated and contains no sensitive data.
+    // Docker lifecycle uses it only to determine whether the daemon is alive.
     let health_router = Router::new()
         .route("/health", get(handle_health))
         .layer(Extension(canary_mgr.clone()));
 
     let protected_routes = Router::new()
-        // Execution
         .route("/execute", post(routes::exec::handle_execute))
         .route("/execute_tmux", post(routes::exec::handle_interactive_tmux))
-        // Egress & Isolation
         .route(
             "/provision_egress",
             post(routes::egress::handle_provision_egress),
@@ -77,7 +78,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/isolation_status",
             get(routes::egress::handle_isolation_status),
         )
-        // Background jobs
         .route(
             "/start_background",
             post(routes::background::handle_start_background),
@@ -87,14 +87,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/kill_background",
             post(routes::background::handle_kill_background),
         )
-        // Tor & Anonymity
         .route("/rotate_tor", post(routes::tor::handle_rotate_tor))
-        // Canary Deception
         .route("/arm_canary", post(routes::canary::handle_arm_canary))
         .route("/canary_status", get(routes::canary::handle_canary_status))
-        // HTTP Probes & L7 Spoofing
         .route("/http_probe", post(routes::probe::handle_http_probe))
-        // Apply RatchetGuard Ed25519 signature & epoch middleware
+        .route("/browser_audit", post(routes::browser::handle_browser_audit))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             ratchet_auth_middleware,
@@ -107,13 +104,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());
 
-    // 5. Bind and Start HTTP Listener
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     info!("Sandbox Daemon listening on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
-
     Ok(())
 }
 
