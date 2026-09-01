@@ -1,0 +1,27 @@
+[package]
+name = "sandbox-daemon"
+version = "0.1.0"
+edition = "2021"
+description = "Axum HTTP daemon with RatchetGuard, Tor rotation, and sandbox orchestration"
+authors = ["Lotargo & Antigravity"]
+
+[dependencies]
+axum = { version = "0.7", features = ["tokio", "http2"] }
+tokio = { version = "1.38", features = ["full"] }
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ed25519-dalek = { version = "2.1", features = ["rand_core", "serde"] }
+chacha20poly1305 = { version = "0.10", features = ["alloc"] }
+zeroize = { version = "1.8", features = ["derive"] }
+hex = "0.4"
+base64 = "0.22"
+sandbox-kernel = { path = "../sandbox-kernel" }
+reqwest = { version = "0.12", features = ["json", "socks"] }
+
+[dev-dependencies]
+tempfile = "3.10"
+rand_core = { version = "0.6", features = ["getrandom"] }

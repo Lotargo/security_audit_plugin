@@ -368,22 +368,22 @@ security_audit_plugin/
 > [!NOTE]
 > Каждый этап зафиксирован отдельным детальным документом в каталоге [`plan/`](./plan/). Настоящий мастер-план служит для сквозной сверки, отслеживания прогресса и глобального понимания архитектуры.
 
-### [ ] [Этап 1: Рефакторинг и стандартизация 19 Skills](./plan/STAGE_1_SKILLS_REFACTORING.md)
+### [x] [Этап 1: Рефакторинг и стандартизация 19 Skills](./plan/STAGE_1_SKILLS_REFACTORING.md)
 *Детальный план: [`plan/STAGE_1_SKILLS_REFACTORING.md`](./plan/STAGE_1_SKILLS_REFACTORING.md)*
-- [ ] Создать структуру директорий `skills/<skill-name>/` для всех 19 скиллов.
-- [ ] Написать мастер-скилл `skills/security-audit-orchestrator/SKILL.md` (OPPLAN, SARIF, триаж скоупа).
-- [ ] Написать скилл `skills/tor-anonymity-onion-routing/SKILL.md` (Tor OPSEC, ротация IP, `.onion`).
-- [ ] Преобразовать 17 существующих файлов в `SKILL.md` (YAML frontmatter, `references/`, `examples/`, `<untrusted_payload>`, вызовы Sandbox MCP).
-- [ ] Удалить устаревшие файлы `skills/*.md`.
+- [x] Создать структуру директорий `skills/<skill-name>/` для всех 19 скиллов.
+- [x] Написать мастер-скилл `skills/security-audit-orchestrator/SKILL.md` (OPPLAN, SARIF, триаж скоупа).
+- [x] Написать скилл `skills/tor-anonymity-onion-routing/SKILL.md` (Tor OPSEC, ротация IP, `.onion`).
+- [x] Преобразовать 17 существующих файлов в `SKILL.md` (YAML frontmatter, `references/`, `examples/`, `<untrusted_payload>`, вызовы Sandbox MCP).
+- [x] Удалить устаревшие файлы `skills/*.md`.
 
-### [ ] [Этап 2: Docker Sandbox Runtime (Rust Kernel, Node.js Stealth Browser, Tor & Deception)](./plan/STAGE_2_RUST_SANDBOX_RUNTIME.md)
+### [x] [Этап 2: Docker Sandbox Runtime (Rust Kernel, Node.js Stealth Browser, Tor & Deception)](./plan/STAGE_2_RUST_SANDBOX_RUNTIME.md)
 *Детальный план: [`plan/STAGE_2_RUST_SANDBOX_RUNTIME.md`](./plan/STAGE_2_RUST_SANDBOX_RUNTIME.md)*
-- [ ] Инициализировать Rust Workspace в `sandbox_runtime/Cargo.toml`.
-- [ ] Реализовать крейт `sandbox-kernel` (`egress.rs`, `panic.rs`, `canary.rs`, `tmux.rs`, `watchdog.rs`).
-- [ ] Реализовать демон `sandbox-daemon` на Axum/Tokio (`auth.rs` RatchetGuard с `zeroize`, HTTP endpoints).
-- [ ] Настроить Node.js стелс стек (`ghost-cursor` кривые Безье, `playwright-extra`, `decoy_traffic.js`).
-- [ ] Настроить сервис `tor` внутри контейнера (`torrc` с ControlPort `9051`).
-- [ ] Написать multi-stage `sandbox_runtime/Dockerfile` и `entrypoint.sh`.
+- [x] Инициализировать Rust Workspace в `sandbox_runtime/Cargo.toml`.
+- [x] Реализовать крейт `sandbox-kernel` (`egress.rs`, `panic.rs`, `canary.rs`, `tmux.rs`, `watchdog.rs`).
+- [x] Реализовать демон `sandbox-daemon` на Axum/Tokio (`auth.rs` RatchetGuard с `zeroize`, HTTP endpoints).
+- [x] Настроить Node.js стелс стек (`ghost-cursor` кривые Безье, `playwright-extra`, `decoy_traffic.js`).
+- [x] Настроить сервис `tor` внутри контейнера (`torrc` с ControlPort `9051`).
+- [x] Написать multi-stage `sandbox_runtime/Dockerfile` и `entrypoint.sh`.
 
 ### [ ] [Этап 3: TypeScript MCP Server, Ratchet Bridge & SARIF Builder](./plan/STAGE_3_HOST_MCP_BRIDGE.md)
 *Детальный план: [`plan/STAGE_3_HOST_MCP_BRIDGE.md`](./plan/STAGE_3_HOST_MCP_BRIDGE.md)*

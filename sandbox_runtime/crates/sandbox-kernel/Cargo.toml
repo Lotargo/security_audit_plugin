@@ -1,0 +1,17 @@
+[package]
+name = "sandbox-kernel"
+version = "0.1.0"
+edition = "2021"
+description = "Core security, egress nftables compiler, tmux management, canary traps and watchdog for security-audit-plugin sandbox"
+authors = ["Lotargo & Antigravity"]
+
+[dependencies]
+tokio = { version = "1.38", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+thiserror = "1.0"
+anyhow = "1.0"
+
+[dev-dependencies]
+tempfile = "3.10"

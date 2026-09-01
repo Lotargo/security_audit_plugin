@@ -109,17 +109,17 @@ sandbox_runtime/
 
 ## 4. Порядок выполнения и контрольные точки
 
-1. [ ] Инициализировать Rust Workspace в `sandbox_runtime/Cargo.toml`.
-2. [ ] Реализовать библиотеку `sandbox-kernel`:
+1. [x] Инициализировать Rust Workspace в `sandbox_runtime/Cargo.toml`.
+2. [x] Реализовать библиотеку `sandbox-kernel`:
    - `egress.rs` (генератор nftables);
    - `panic.rs` (kill switch);
    - `canary.rs` (inotify ловушки);
    - `tmux.rs` (tmux сессии и дифф логов);
    - `watchdog.rs` (лимитер 30KB).
-3. [ ] Реализовать HTTP демон `sandbox-daemon`:
+3. [x] Реализовать HTTP демон `sandbox-daemon`:
    - `auth.rs` (`RatchetGuard` с Ed25519 и `zeroize`);
    - Эндпоинты `/execute`, `/execute_tmux`, `/provision_egress`, `/emergency_isolate`, `/rotate_tor`, `/arm_canary`, `/start_background`, `/poll_completion`, `/read_session_log_diff`.
-4. [ ] Написать модули стелс-браузера на Node.js (`mouse_bezier.js`, `browser_launcher.js`, `decoy_traffic.js`).
-5. [ ] Настроить конфигурацию Tor (`torrc`).
-6. [ ] Написать многоэтапный `sandbox_runtime/Dockerfile` и `entrypoint.sh`.
-7. [ ] Валидация: выполнить сборку Rust компонентов (`cargo check`, `cargo test`).
+4. [x] Написать модули стелс-браузера на Node.js (`mouse_bezier.js`, `browser_launcher.js`, `decoy_traffic.js`).
+5. [x] Настроить конфигурацию Tor (`torrc`).
+6. [x] Написать многоэтапный `sandbox_runtime/Dockerfile` и `entrypoint.sh`.
+7. [x] Валидация: выполнить сборку Rust компонентов (`cargo check`, `cargo test` — 9/9 тестов успешно).

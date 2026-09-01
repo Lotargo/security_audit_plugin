@@ -1,0 +1,9 @@
+# torrc - Tor configuration for security-audit-plugin sandbox
+SocksPort 0.0.0.0:9050
+ControlPort 0.0.0.0:9051
+CookieAuthentication 0
+DataDirectory /var/lib/tor
+SafeLogging 1
+Log notice stdout
+MaxCircuitDirtiness 30
+ClientOnly 1
