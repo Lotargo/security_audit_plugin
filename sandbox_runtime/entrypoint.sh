@@ -3,8 +3,15 @@ set -e
 
 echo "[*] Initializing Security Audit Docker Sandbox Environment..."
 
+# Ensure unprivileged agent user exists in /etc/passwd and workspace is accessible
+EXEC_UID="${AUDIT_EXEC_UID:-1001}"
+EXEC_GID="${AUDIT_EXEC_GID:-1001}"
+getent group "$EXEC_GID" >/dev/null 2>&1 || groupadd -g "$EXEC_GID" audit-agent 2>/dev/null || true
+getent passwd "$EXEC_UID" >/dev/null 2>&1 || useradd -u "$EXEC_UID" -g "$EXEC_GID" -d /workspace -s /bin/bash audit-agent 2>/dev/null || true
+
 # Ensure workspace and log directories exist
 mkdir -p /workspace/logs /workspace/reports /workspace/plan /workspace/code
+chown -R "$EXEC_UID:$EXEC_GID" /workspace
 mkdir -p /etc/nftables
 
 # Close all non-loopback egress before any network-capable helper starts. The daemon reapplies the

@@ -35,20 +35,27 @@ impl KillSwitch {
         error!("!!! EMERGENCY KILL SWITCH TRIGGERED !!! Reason: {}", reason);
         IS_ISOLATED.store(true, Ordering::SeqCst);
 
-        let blackout_rules = r#"#!/usr/sbin/nft -f
+        let mgmt_port = std::env::var("PORT").unwrap_or_else(|_| "9999".to_string());
+        let blackout_rules = format!(
+            r#"#!/usr/sbin/nft -f
 flush ruleset
-table inet filter {
-    chain input {
+table inet filter {{
+    chain input {{
         type filter hook input priority 0; policy drop;
-    }
-    chain forward {
+        iifname "lo" accept
+        tcp dport {mgmt_port} accept
+    }}
+    chain forward {{
         type filter hook forward priority 0; policy drop;
-    }
-    chain output {
+    }}
+    chain output {{
         type filter hook output priority 0; policy drop;
-    }
-}
-"#;
+        oifname "lo" accept
+        tcp sport {mgmt_port} accept
+    }}
+}}
+"#
+        );
 
         #[cfg(target_os = "linux")]
         {

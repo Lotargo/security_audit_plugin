@@ -77,7 +77,7 @@ COPY --from=builder /usr/src/app/target/release/sandbox-daemon /usr/local/bin/sa
 RUN chmod +x /usr/local/bin/sandbox-daemon
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
 
 WORKDIR /workspace
 RUN mkdir -p /workspace/logs /workspace/reports /workspace/plan /workspace/code

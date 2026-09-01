@@ -87,6 +87,8 @@ fn planned_rules(config: &EgressConfig, audit_uid: u32) -> Vec<Vec<String>> {
             "meta".into(),
             "skuid".into(),
             TOR_EXEC_UID.to_string(),
+            "meta".into(),
+            "l4proto".into(),
             "tcp".into(),
             "accept".into(),
         ]);
@@ -183,7 +185,7 @@ mod tests {
             .unwrap();
         let tor_allow = rendered
             .iter()
-            .position(|rule| rule == &format!("meta skuid {TOR_EXEC_UID} tcp accept"))
+            .position(|rule| rule == &format!("meta skuid {TOR_EXEC_UID} meta l4proto tcp accept"))
             .unwrap();
         assert!(private_v4 < tor_allow);
     }
