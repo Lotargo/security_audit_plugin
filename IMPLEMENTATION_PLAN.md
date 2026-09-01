@@ -363,67 +363,46 @@ security_audit_plugin/
 
 ---
 
-## 9. Поэтапный план реализации (Roadmap)
+## 9. Поэтапный план реализации (Roadmap & Checkpoints)
 
-### Этап 1: Стандартизация и рефакторинг Skills
-1. Создать структуру `skills/<skill-name>/` для всех 19 скиллов.
-2. Написать мастер-скилл `security-audit-orchestrator` с поддержкой 3 режимов (`local`, `remote`, `hybrid`), структуры **OPPLAN**, конфигурацией прокси/спуфинга, ротацией Tor IP (`sandbox_rotate_tor_ip`), протоколами экстренного сброса, расстановкой канарских приманок (`honeytokens`), распознаванием MTD/Chaos Mode и формированием отчетов в **SARIF** + Markdown.
-3. Разработать новый скилл `skills/tor-anonymity-onion-routing/SKILL.md` (OPSEC-чеклист, предотвращение утечек DNS/WebRTC, правила ротации по кодам ошибок, аудит `.onion` сервисов).
-4. Преобразовать 17 существующих файлов в `SKILL.md`:
-   - Добавить YAML frontmatter (`name`, `description: "Use when..."`).
-   - Вынести массивные матрицы, спецификации и справочники в `references/`.
-   - Добавить примеры PoC и отчетов в `examples/`.
-   - Встроить явные вызовы инструментов Sandbox MCP (`sandbox_exec`, `sandbox_start_background`, `sandbox_poll_logs`, `sandbox_browser_audit`, `sandbox_bundle_extract`, `sandbox_http_probe`, `sandbox_rotate_tor_ip` с L7 спуфингом).
-   - Внедрить разметку `<untrusted_payload>` для защиты от Indirect Prompt Injection.
+> [!NOTE]
+> Каждый этап зафиксирован отдельным детальным документом в каталоге [`plan/`](./plan/). Настоящий мастер-план служит для сквозной сверки, отслеживания прогресса и глобального понимания архитектуры.
 
-### Этап 2: Docker Sandbox Runtime (Rust Kernel, Node.js Stealth Browser, Tor & Deception)
-1. Реализовать Rust крейт `sandbox-kernel`:
-   - `egress.rs` (генератор правил `nftables` с приоритетным `DROP` на приватные подсети и открытием Tor/Proxy).
-   - `panic.rs` (мгновенный сетевой блэкаут `conntrack -F` + drop all).
-   - `canary.rs` (мониторинг ловушек `.aws`, `.ssh`, `.env` через Linux `inotify`).
-   - `tmux.rs` (управление постоянными сессиями `tmux` и дельта-логи).
-   - `watchdog.rs` (лимитер 30KB с записью в `/workspace/logs/`).
-2. Реализовать Rust демон `sandbox-daemon` (`Axum` + `Tokio`):
-   - Middleware `RatchetGuard` (Ed25519 верификация, учет эпох, затирание `zeroize`).
-   - Endpoints: `/execute`, `/execute_tmux`, `/provision_egress`, `/emergency_isolate`, `/rotate_tor`, `/arm_canary`, `/start_background`, `/poll_completion`, `/read_session_log_diff`.
-3. Настроить Node.js стелс стек: `ghost-cursor` (кривые Безье), `playwright-extra`, `puppeteer-extra-plugin-stealth`, `decoy_traffic.js`.
-4. Настроить сервис `tor` внутри контейнера (`torrc` с ControlPort `9051`).
-5. Написать многоэтапный `sandbox_runtime/Dockerfile` (Rust builder $\rightarrow$ Kali runtime с Chromium, Node.js, утилитами и `tini`).
+### [ ] [Этап 1: Рефакторинг и стандартизация 19 Skills](./plan/STAGE_1_SKILLS_REFACTORING.md)
+*Детальный план: [`plan/STAGE_1_SKILLS_REFACTORING.md`](./plan/STAGE_1_SKILLS_REFACTORING.md)*
+- [ ] Создать структуру директорий `skills/<skill-name>/` для всех 19 скиллов.
+- [ ] Написать мастер-скилл `skills/security-audit-orchestrator/SKILL.md` (OPPLAN, SARIF, триаж скоупа).
+- [ ] Написать скилл `skills/tor-anonymity-onion-routing/SKILL.md` (Tor OPSEC, ротация IP, `.onion`).
+- [ ] Преобразовать 17 существующих файлов в `SKILL.md` (YAML frontmatter, `references/`, `examples/`, `<untrusted_payload>`, вызовы Sandbox MCP).
+- [ ] Удалить устаревшие файлы `skills/*.md`.
 
-### Этап 3: Node.js / TypeScript MCP Server, Ratchet Bridge & SARIF Builder
-1. Настроить TypeScript проект с `@modelcontextprotocol/sdk`.
-2. Реализовать `src/mcp/security/ratchet_bridge.ts` (Bi-directional Rolling BYOK, генератор Ed25519, ротация сессионных ключей каждые 15–30 сек, морфинг конвертов).
-3. Реализовать модуль безопасности хоста: `jail.ts` (Path Traversal guard) и `redaction.ts` (маскирование секретов в логах).
-4. Реализовать `src/sarif/builder.ts` для генерации стандартизированных отчетов OASIS SARIF v2.1.0.
-5. Реализовать `DockerRunner` (проверка наличия Docker, запуск/остановка/принудительное пересоздание контейнера песочницы, изоляция сокетов).
-6. Реализовать `SandboxBridge` (клиент взаимодействия с песочницей через `RatchetBridge`).
-7. Зарегистрировать все MCP-инструменты (`sandbox_set_scope`, `sandbox_rotate_tor_ip`, `sandbox_exec`, `sandbox_interactive_input`, `sandbox_start_background`, `sandbox_poll_logs`, `sandbox_browser_audit`, `sandbox_bundle_extract`, `sandbox_http_probe`, `sandbox_kill_switch`, `sandbox_reset`, `sandbox_fs_*`).
+### [ ] [Этап 2: Docker Sandbox Runtime (Rust Kernel, Node.js Stealth Browser, Tor & Deception)](./plan/STAGE_2_RUST_SANDBOX_RUNTIME.md)
+*Детальный план: [`plan/STAGE_2_RUST_SANDBOX_RUNTIME.md`](./plan/STAGE_2_RUST_SANDBOX_RUNTIME.md)*
+- [ ] Инициализировать Rust Workspace в `sandbox_runtime/Cargo.toml`.
+- [ ] Реализовать крейт `sandbox-kernel` (`egress.rs`, `panic.rs`, `canary.rs`, `tmux.rs`, `watchdog.rs`).
+- [ ] Реализовать демон `sandbox-daemon` на Axum/Tokio (`auth.rs` RatchetGuard с `zeroize`, HTTP endpoints).
+- [ ] Настроить Node.js стелс стек (`ghost-cursor` кривые Безье, `playwright-extra`, `decoy_traffic.js`).
+- [ ] Настроить сервис `tor` внутри контейнера (`torrc` с ControlPort `9051`).
+- [ ] Написать multi-stage `sandbox_runtime/Dockerfile` и `entrypoint.sh`.
 
-### Этап 4: NPM CLI и Интеграционные манифесты
-1. Реализовать CLI утилиту `bin/cli.js`:
-   - `npx @security-audit/plugin mcp` — запуск MCP-сервера через STDIO.
-   - `npx @security-audit/plugin install-skills --target [agy|opencode|claude]` — экспорт скиллов в `~/.gemini/config/plugins/`, `.agents/skills/` или `.claude/skills/`.
-   - `npx @security-audit/plugin doctor` — проверка Docker, портов и зависимостей.
-   - `npx @security-audit/plugin reset-sandbox` — ручной перезапуск чистой песочницы.
-2. Создать манифесты `plugin.json` и `mcp_config.json` для AGY и OpenCode.
+### [ ] [Этап 3: TypeScript MCP Server, Ratchet Bridge & SARIF Builder](./plan/STAGE_3_HOST_MCP_BRIDGE.md)
+*Детальный план: [`plan/STAGE_3_HOST_MCP_BRIDGE.md`](./plan/STAGE_3_HOST_MCP_BRIDGE.md)*
+- [ ] Настроить TypeScript проект (`package.json`, `tsconfig.json`).
+- [ ] Реализовать `src/mcp/security/ratchet_bridge.ts` (Ed25519, ротация сессий 15–30с, морфинг конвертов).
+- [ ] Реализовать модули безопасности хоста: `jail.ts` (Path Traversal guard), `redaction.ts` (маскирование секретов).
+- [ ] Реализовать `src/sarif/builder.ts` для генерации отчетов OASIS SARIF v2.1.0.
+- [ ] Реализовать `src/docker/runner.ts` (жизненный цикл контейнера) и `src/mcp/bridge.ts`.
+- [ ] Зарегистрировать все 12 MCP-инструментов в `src/mcp/tools/` и STDIO сервер в `src/mcp/server.ts`.
 
-### Этап 5: Сквозное тестирование и валидация
-1. Тестирование работы криптографического рэтчета (`RatchetBridge` $\leftrightarrow$ `RatchetGuard`):
-   - Проверка успешного прохождения подписанных запросов от хоста к Rust демону.
-   - Проверка отклонения запросов с протухшим $K(t)$ ключом или неверной подписью.
-   - Проверка невозможности инициировать обратный вызов из песочницы на хост.
-2. Тестирование локального SAST-аудита в режиме `local` (проверка изоляции сети `default drop` и выгрузки находок в SARIF).
-3. Тестирование удаленного DAST-аудита в режиме `remote` по внешнему URL (проверка работы Chromium со стелс-плагинами и кривыми Безье, перехвата CDP, распознавания MTD/Chaos Mode, генерации Decoy-шума, сбора HAR и извлечения бандлов).
-4. Тестирование работы через Tor и динамической смены IP:
-   - Запуск `sandbox_set_scope` с `proxy: "tor"`.
-   - Проверка текущего исходящего IP, вызов `sandbox_rotate_tor_ip`, проверка получения нового IP.
-5. Тестирование работы через Upstream Proxy (Burp/Caido/SOCKS5) и L7 Header Spoofing (`X-Forwarded-For`).
-6. Тестирование механизмов самозащиты и Deception:
-   - Попытка выхода за границы каталога через `sandbox_fs_read("../../.ssh/id_rsa")` (проверка `AccessDenied`).
-   - Попытка обращения к локальной сети (`192.168.1.1`) из контейнера (проверка сетевого `DROP`).
-   - Попытка чтения приманки `/root/.aws/credentials` внутри контейнера (проверка мгновенного срабатывания `inotify` в Rust и вызова `kill_switch`).
-   - Проверка маскирования `Bearer s***` в отчетах SARIF.
-7. Тестирование фоновых задач (`sandbox_start_background`, `sandbox_poll_logs`) и ограничения вывода (30KB watchdog).
-8. Аварийные процедуры: вызов `sandbox_kill_switch` и быстрое пересоздание контейнера через `sandbox_reset`.
-9. Проверка интерактивного ввода в `tmux` (утилиты с запросом `[y/N]`).
-10. Валидация распознавания скиллов в AGY и OpenCode.
+### [ ] [Этап 4: NPM CLI, Packaging & Manifests (AGY, OpenCode)](./plan/STAGE_4_NPM_CLI_AND_PACKAGING.md)
+*Детальный план: [`plan/STAGE_4_NPM_CLI_AND_PACKAGING.md`](./plan/STAGE_4_NPM_CLI_AND_PACKAGING.md)*
+- [ ] Написать CLI роутер `bin/cli.js` (`mcp`, `install-skills`, `doctor`, `reset-sandbox`).
+- [ ] Создать манифесты `plugins/agy/plugin.json`, `plugins/agy/mcp_config.json` и `plugins/opencode/opencode.json`.
+- [ ] Настроить `package.json` и скрипты сборки.
+
+### [ ] [Этап 5: Сквозное тестирование и валидация безопасности](./plan/STAGE_5_TESTING_AND_VALIDATION.md)
+*Детальный план: [`plan/STAGE_5_TESTING_AND_VALIDATION.md`](./plan/STAGE_5_TESTING_AND_VALIDATION.md)*
+- [ ] Запустить автоматические тесты (Rust `cargo test`, TS `npm test`).
+- [ ] Протестировать криптографический рэтчет (RatchetGuard, отсечение Replay-атак, `zeroize` память).
+- [ ] Прогнать сценарии локального SAST, удаленного DAST, стелс-браузера, ротации Tor, канарских ловушек и аварийного сброса.
+- [ ] Сформировать финальный отчет в `walkthrough.md`.
