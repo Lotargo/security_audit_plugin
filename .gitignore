@@ -53,7 +53,8 @@ reports/
 *.pcapng
 *.sarif
 opplan.json
-plan/
+plan/*
+!plan/*.md
 plans/
 
 # IDE & OS Metadata

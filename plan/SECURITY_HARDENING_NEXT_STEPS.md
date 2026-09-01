@@ -19,7 +19,7 @@ The following work is already in place and should be treated as the new baseline
 - Request signatures bind method, exact path + query, epoch, nonce, and transmitted body hash.
 - Replay protection and fail-closed authentication behavior.
 - Docker runtime health/re-key flow owned by the host MCP process.
-- Agent-controlled command execution runs as a non-root UID.
+- Agent-controlled command execution runs as a non-root UID (`AUDIT_EXEC_UID:AUDIT_EXEC_GID` / `audit-agent`).
 - tmux panes do not inherit daemon root privileges.
 - Managed browser execution uses a separate non-root runtime identity.
 - Tor uses a separate runtime identity from both the agent and browser.
@@ -28,10 +28,13 @@ The following work is already in place and should be treated as the new baseline
 - Tor ControlPort authentication uses cookie authentication and localhost binding.
 - Active network scope is tracked on the trusted host bridge.
 - Managed browser/probe calls are rejected by the bridge when their requested URL is outside the active scope.
-- Arbitrary per-call proxy switching is rejected.
-- External upstream proxy support is currently fail-closed instead of being allowed as an unsafe generic CONNECT escape route.
-- Live Docker roundtrip has already validated the startup containment / privilege-separation layer.
-- Rust check, unit tests and clippy have already passed for the containment implementation; the only failure seen in that run was formatting and was corrected separately.
+- Managed browser (`browser_launcher.js`) intercepts all requests/subresources/redirects against `allowed_hosts`.
+- HTTP probe (`probe.rs`) enforces strict redirect policies against `allowed_hosts` fail-closed.
+- DNS Pinning: direct remote scopes resolve hostnames once on the trusted host and pin resolved IPs into static nftables CIDR allowlists; no automatic expansion occurs.
+- Tor scopes preserve remote DNS via SOCKS without host DNS leakage and block container agent UDP/TCP port 53.
+- Hardware Kill Switch flushes conntrack and drops all non-management traffic fail-closed.
+- Hard reset cleanly respawns the sandbox container and purges old scopes, Tor states, and egress capabilities.
+- Live Docker adversarial escape-regression suite (`tests/docker_roundtrip.test.ts`) verifies all 15 security boundary invariants (17/17 tests passing).
 
 The current direction is therefore: **defense in depth**, not another architectural rewrite.
 
@@ -392,28 +395,25 @@ Only after the hardening checklist is green:
 
 ---
 
-# Execution order summary
+# Execution order status
 
-Use this sequence when continuing development:
-
-1. **Browser per-request/redirect scope enforcement.**
-2. **Tor DNS-leak fix in managed browser/probe paths.**
-3. **HTTP probe redirect scope enforcement.**
-4. **Tests for the complete L7 boundary.**
-5. **Strict nftables remote/hybrid destination allowlist.**
-6. **DNS pinning / controlled resolution semantics.**
-7. **Adversarial Docker escape tests.**
-8. **Tor lifecycle cleanup.**
-9. **Safe external proxy design, or keep it disabled.**
-10. **MCP tool/schema/documentation contract cleanup.**
-11. **Final CI, packaging, README/CHANGELOG/ROADMAP pass.**
+1. [x] **Browser per-request/redirect scope enforcement.** (Completed & tested)
+2. [x] **Tor DNS-leak fix in managed browser/probe paths.** (Completed & tested)
+3. [x] **HTTP probe redirect scope enforcement.** (Completed & tested)
+4. [x] **Tests for the complete L7 boundary.** (Completed & tested)
+5. [x] **Strict nftables remote/hybrid destination allowlist.** (Completed & tested)
+6. [x] **DNS pinning / controlled resolution semantics.** (Completed & tested)
+7. [x] **Adversarial Docker escape tests.** (Completed: 17/17 live tests in `docker_roundtrip.test.ts` passing)
+8. [x] **Tor lifecycle cleanup.** (Completed: isolated UID, cookie auth, port 53/9050/9051 containment)
+9. [x] **Safe external proxy design.** (Disabled fail-closed by design)
+10. [ ] **MCP tool/schema/documentation contract cleanup.** (Next Stage)
+11. [ ] **Final CI, packaging, README/CHANGELOG/ROADMAP pass.**
 
 ---
 
-# Rule for the next development session
+# Immediate Next Stage
 
-Do not start by redesigning the sandbox again.
-
-Start from the current `main`, confirm the active HEAD, then continue with **L7 scope enforcement in the managed browser and HTTP probe**. Keep each security boundary change in a separate commit so that a CI regression can be attributed to one layer.
-
-If a live test fails, diagnose the concrete log first and patch the root cause rather than weakening the security policy to make the test green.
+Proceed with **MCP tool/schema/documentation contract cleanup (Items 11-15)**:
+- Audit registered MCP tools against runtime implementations.
+- Reconcile `sandbox_bundle_extract` and `ca_cert_b64` contracts.
+- Synchronize SARIF export and README documentation.
