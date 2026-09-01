@@ -109,3 +109,46 @@ export function normalizeCidrList(values: string[], label: string): string[] {
   }
   return [...normalized].sort();
 }
+
+/**
+ * Produce the exact L7 hostname allowlist used by managed proxy/Tor clients.
+ * Broad CIDRs are intentionally rejected here: once traffic is tunneled through a proxy the
+ * sandbox kernel can see only the proxy endpoint, so a network CIDR cannot be enforced reliably.
+ */
+export function normalizeScopeHosts(targets: string[]): string[] {
+  const hosts = new Set<string>();
+
+  for (const target of targets) {
+    const trimmed = target.trim();
+    if (!trimmed) throw new Error('Scope target cannot be empty');
+
+    const direct = normalizeIpSpec(trimmed);
+    if (direct) {
+      const [address, prefixText] = direct.split('/');
+      const family = isIP(address);
+      const hostPrefix = family === 4 ? 32 : 128;
+      if (Number(prefixText) !== hostPrefix) {
+        throw new Error(
+          `Proxy/Tor scope target must be a single host, not a broad CIDR: ${target}`
+        );
+      }
+      hosts.add(address.toLowerCase());
+      continue;
+    }
+
+    hosts.add(extractTargetHostname(trimmed).toLowerCase());
+  }
+
+  return [...hosts].sort();
+}
+
+export function isUrlInScope(url: string, allowedHosts: string[]): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    const hostname = stripIpv6Brackets(parsed.hostname).toLowerCase();
+    return allowedHosts.some((allowed) => allowed.toLowerCase() === hostname);
+  } catch {
+    return false;
+  }
+}
