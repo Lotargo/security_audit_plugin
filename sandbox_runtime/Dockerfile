@@ -1,19 +1,22 @@
 # ==============================================================================
 # Stage 1: Rust Builder
 # ==============================================================================
-FROM rust:1.85-slim-bookworm AS builder
+FROM rust:1.98-slim-bookworm AS builder
 
 WORKDIR /usr/src/app
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy workspace sources
 COPY Cargo.toml Cargo.lock* ./
 COPY crates ./crates
 
-# Build release binaries
-RUN cargo build --release --bin sandbox-daemon
+# Build release binaries with the same Rust line used by CI.
+RUN cargo build --locked --release --bin sandbox-daemon
 
 # ==============================================================================
 # Stage 2: Minimal & Hardened Kali Security Runtime
@@ -28,7 +31,9 @@ ENV PORT=9999
 ENV CHROMIUM_PATH=/usr/bin/chromium
 ENV NODE_PATH=/opt/stealth/node_modules
 
-# 1. Update and install base runtime, system tools, Tor & networking
+# Keep the explicit package list limited to top-level capabilities. Chromium's required
+# rendering/audio libraries are installed by apt as dependencies, avoiding brittle distro-
+# specific package names (for example Debian/Kali t64 transitions).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tini \
     tor \
@@ -43,28 +48,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     nodejs \
     npm \
-    # Headless Chromium & rendering dependencies
     chromium \
     chromium-driver \
-    libnss3 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libxkbcommon0 \
-    libpango-1.0-0 \
-    libasound2 \
-    # Pre-installed DAST/SAST Arsenal
     nmap \
     subfinder \
     sqlmap \
     nikto \
     yara \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # 2. Setup Tor configuration
 COPY tor/torrc /etc/tor/torrc
@@ -88,8 +80,5 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 WORKDIR /workspace
 RUN mkdir -p /workspace/logs /workspace/reports /workspace/plan /workspace/code
 
-# Expose internal management port
 EXPOSE 9999
-
-# Run under tini init process
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
