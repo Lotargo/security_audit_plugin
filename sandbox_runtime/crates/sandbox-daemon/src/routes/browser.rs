@@ -8,9 +8,32 @@ use tracing::{error, info};
 
 use sandbox_kernel::browser_exec_identity;
 
+fn has_proxy(config: &Value) -> bool {
+    config
+        .get("proxy")
+        .and_then(Value::as_str)
+        .is_some_and(|proxy| !proxy.trim().is_empty())
+}
+
+fn has_scope_hosts(config: &Value) -> bool {
+    config
+        .get("allowed_hosts")
+        .and_then(Value::as_array)
+        .is_some_and(|hosts| hosts.iter().any(|host| host.as_str().is_some_and(|v| !v.trim().is_empty())))
+}
+
 pub async fn handle_browser_audit(
     Json(config): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if has_proxy(&config) && !has_scope_hosts(&config) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "Proxied browser audits require an explicit RoE host allowlist"
+            })),
+        ));
+    }
+
     let config_bytes = serde_json::to_vec(&config).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
@@ -88,4 +111,24 @@ pub async fn handle_browser_audit(
 
     info!("Browser audit completed successfully");
     Ok(Json(report))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proxied_browser_requires_scope_hosts() {
+        let config = serde_json::json!({"url": "https://example.com", "proxy": "socks5://127.0.0.1:9050"});
+        assert!(has_proxy(&config));
+        assert!(!has_scope_hosts(&config));
+
+        let scoped = serde_json::json!({
+            "url": "https://example.com",
+            "proxy": "socks5://127.0.0.1:9050",
+            "allowed_hosts": ["example.com"]
+        });
+        assert!(has_proxy(&scoped));
+        assert!(has_scope_hosts(&scoped));
+    }
 }
