@@ -15,7 +15,6 @@ export interface ScopeOptions {
   mode: 'local' | 'remote' | 'hybrid';
   targets?: string[];
   proxy?: string;
-  ca_cert_b64?: string;
   arm_canaries?: boolean;
   allowed_cidrs?: string[];
   denied_cidrs?: string[];
@@ -37,12 +36,6 @@ export interface BrowserAuditOptions {
   bypass_turnstile?: boolean;
   generate_decoy_noise?: boolean;
   spoof_headers?: Record<string, string>;
-}
-
-export interface BundleExtractOptions {
-  url: string;
-  proxy?: string;
-  out_dir?: string;
 }
 
 export interface ExecResult {
@@ -195,12 +188,6 @@ export class SandboxBridge {
   }
 
   public async setScope(options: ScopeOptions): Promise<any> {
-    if (options.ca_cert_b64) {
-      throw new Error(
-        'Custom CA injection is not implemented yet; refusing to silently ignore ca_cert_b64'
-      );
-    }
-
     const enableTor = options.proxy === 'tor' || options.proxy === TOR_PROXY;
     const proxyTarget = options.proxy && !enableTor ? options.proxy : undefined;
     const networkedMode = options.mode === 'remote' || options.mode === 'hybrid';
@@ -337,12 +324,6 @@ export class SandboxBridge {
       proxy: networkPolicy.proxy,
       allowed_hosts: networkPolicy.allowedHosts,
     });
-  }
-
-  public async bundleExtract(options: BundleExtractOptions): Promise<any> {
-    throw new Error(
-      `Bundle extraction runtime is not implemented in the current sandbox image (requested ${options.url})`
-    );
   }
 
   public async httpProbe(options: HttpProbeOptions): Promise<any> {
