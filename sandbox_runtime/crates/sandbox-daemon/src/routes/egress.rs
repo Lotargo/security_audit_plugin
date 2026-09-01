@@ -3,7 +3,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tracing::{error, info, warn};
 
-use sandbox_kernel::egress::{EgressConfig, EgressManager};
+use sandbox_kernel::egress::{EgressConfig, EgressError, EgressManager};
 use sandbox_kernel::panic::KillSwitch;
 
 #[derive(Debug, Deserialize)]
@@ -26,9 +26,15 @@ pub async fn handle_provision_egress(
             "proxy_enabled": config.proxy_enabled,
         }))),
         Err(e) => {
+            let status = match &e {
+                EgressError::InvalidAddress(_) | EgressError::InvalidPolicy(_) => {
+                    StatusCode::BAD_REQUEST
+                }
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
             error!("Failed to apply egress rules: {}", e);
             Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
+                status,
                 Json(json!({"error": format!("Failed to apply egress rules: {}", e)})),
             ))
         }

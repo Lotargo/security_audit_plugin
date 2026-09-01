@@ -82,6 +82,8 @@ pub enum EgressError {
     ExecutionFailed(String),
     #[error("Invalid IP or CIDR specification: {0}")]
     InvalidAddress(String),
+    #[error("Invalid egress policy: {0}")]
+    InvalidPolicy(String),
     #[error("I/O error during ruleset configuration: {0}")]
     IoError(#[from] std::io::Error),
 }
@@ -181,6 +183,29 @@ pub fn split_ip_families(addrs: &[String]) -> (Vec<String>, Vec<String>) {
     (v4, v6)
 }
 
+pub fn is_valid_ip_or_cidr(spec: &str) -> bool {
+    let clean = spec.trim();
+    if clean.is_empty() {
+        return false;
+    }
+
+    if let Some((address, prefix)) = clean.rsplit_once('/') {
+        let Ok(ip) = IpAddr::from_str(address) else {
+            return false;
+        };
+        let Ok(prefix) = prefix.parse::<u8>() else {
+            return false;
+        };
+        let max_prefix = match ip {
+            IpAddr::V4(_) => 32,
+            IpAddr::V6(_) => 128,
+        };
+        return prefix <= max_prefix;
+    }
+
+    IpAddr::from_str(clean).is_ok()
+}
+
 #[derive(Debug, Default)]
 pub struct EgressManager {
     mock_mode: bool,
@@ -198,6 +223,55 @@ impl EgressManager {
     pub fn with_mock_mode(mut self, mock: bool) -> Self {
         self.mock_mode = mock;
         self
+    }
+
+    fn validate_address_list(label: &str, values: &[String]) -> Result<(), EgressError> {
+        for value in values {
+            if !is_valid_ip_or_cidr(value) {
+                return Err(EgressError::InvalidAddress(format!("{label}: {value}")));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate_config(&self, config: &EgressConfig) -> Result<(), EgressError> {
+        Self::validate_address_list("allowed_cidrs", &config.allowed_cidrs)?;
+        if config
+            .allowed_cidrs
+            .iter()
+            .any(|cidr| cidr.trim() == "0.0.0.0/0" || cidr.trim() == "::/0")
+        {
+            return Err(EgressError::InvalidPolicy(
+                "unbounded /0 CIDRs are not permitted in the egress allowlist".to_string(),
+            ));
+        }
+        Self::validate_address_list("denied_cidrs", &config.denied_cidrs)?;
+        Self::validate_address_list("extra_management_cidrs", &config.extra_management_cidrs)?;
+        Self::validate_address_list("extra_dns_resolvers", &config.extra_dns_resolvers)?;
+
+        if config.proxy_enabled
+            && config
+                .proxy_target
+                .as_deref()
+                .is_none_or(|target| target.trim().is_empty())
+        {
+            return Err(EgressError::InvalidPolicy(
+                "proxy_enabled requires a non-empty proxy_target".to_string(),
+            ));
+        }
+
+        if matches!(config.mode, AuditMode::Remote | AuditMode::Hybrid)
+            && config.allowed_cidrs.is_empty()
+            && !config.tor_enabled
+            && !config.proxy_enabled
+        {
+            return Err(EgressError::InvalidPolicy(
+                "remote/hybrid mode requires resolved allowed CIDRs, Tor, or an upstream proxy"
+                    .to_string(),
+            ));
+        }
+
+        Ok(())
     }
 
     fn push_ipv4_set(rules: &mut String, name: &str, values: &[String]) {
@@ -286,7 +360,9 @@ impl EgressManager {
                 rules.push_str("        # Local mode: no new non-loopback network connections\n");
             }
             AuditMode::Remote | AuditMode::Hybrid => {
-                rules.push_str("        # Remote / Hybrid mode: controlled public egress\n");
+                rules.push_str(
+                    "        # Remote / Hybrid mode: explicit pinned-target egress only\n",
+                );
 
                 if !dns_v4.is_empty() {
                     rules.push_str("        ip daddr @dns_resolvers_v4 udp dport 53 accept comment \"DNS resolver v4\"\n");
@@ -297,9 +373,9 @@ impl EgressManager {
                     rules.push_str("        ip6 daddr @dns_resolvers_v6 tcp dport 53 accept comment \"DNS resolver v6\"\n");
                 }
 
-                // Private, loopback, link-local and metadata ranges win over generic web egress.
-                // Callers may deliberately replace denied_cidrs when an authorized private target
-                // is part of the engagement.
+                // Denied ranges win over explicit target CIDRs. Authorized private engagements
+                // must narrow/replace denied_cidrs explicitly instead of disabling the guardrail
+                // implicitly through a hostname that happens to resolve to a private address.
                 if !denied_v4.is_empty() {
                     rules.push_str("        ip daddr @denied_private_cidrs_v4 drop comment \"block private/metadata v4\"\n");
                 }
@@ -314,17 +390,12 @@ impl EgressManager {
                     rules.push_str("        ip6 daddr @allowed_targets_v6 accept comment \"explicit in-scope CIDRs v6\"\n");
                 }
 
-                // General DAST traffic is limited to common web ports. Target-domain enforcement
-                // remains an L7/browser/probe responsibility unless explicit CIDRs are supplied.
-                rules.push_str("        tcp dport { 80, 443, 8080, 8443 } accept comment \"web audit egress\"\n");
-
                 if config.tor_enabled {
                     rules.push_str("        # Local Tor SOCKS/Control connections are covered by loopback accept\n");
                 }
                 if config.proxy_enabled {
-                    if let Some(proxy) = &config.proxy_target {
-                        rules.push_str(&format!("        # Configured upstream proxy: {proxy}\n"));
-                    }
+                    rules
+                        .push_str("        # Upstream proxy endpoint is pinned in allowed CIDRs\n");
                 }
             }
         }
@@ -337,6 +408,7 @@ impl EgressManager {
     }
 
     pub fn apply_rules(&self, config: &EgressConfig) -> Result<(), EgressError> {
+        self.validate_config(config)?;
         let rules = self.compile_nftables_rules(config);
         info!("Applying nftables ruleset for mode: {:?}", config.mode);
 
@@ -411,6 +483,15 @@ lo\t0000007F\t00000000\t0001\t0\t0\t0\t000000FF\t0\t0\t0\n";
     }
 
     #[test]
+    fn validates_ip_and_cidr_specs() {
+        assert!(is_valid_ip_or_cidr("93.184.216.34/32"));
+        assert!(is_valid_ip_or_cidr("2001:db8::1/128"));
+        assert!(is_valid_ip_or_cidr("127.0.0.11"));
+        assert!(!is_valid_ip_or_cidr("10.0.0.1/33"));
+        assert!(!is_valid_ip_or_cidr("1.2.3.4/32 }\nflush ruleset\n"));
+    }
+
+    #[test]
     fn local_mode_has_no_new_dns_or_management_egress() {
         let manager = EgressManager::new().with_mock_mode(true);
         let rules = manager.compile_nftables_rules(&EgressConfig::default());
@@ -424,7 +505,7 @@ lo\t0000007F\t00000000\t0001\t0\t0\t0\t000000FF\t0\t0\t0\n";
     }
 
     #[test]
-    fn remote_mode_has_private_range_guard_before_generic_web_egress() {
+    fn remote_mode_has_only_explicit_pinned_target_egress() {
         let manager = EgressManager::new().with_mock_mode(true);
         let config = EgressConfig {
             mode: AuditMode::Remote,
@@ -437,15 +518,73 @@ lo\t0000007F\t00000000\t0001\t0\t0\t0\t000000FF\t0\t0\t0\n";
         };
         let rules = manager.compile_nftables_rules(&config);
 
-        let denied_pos = rules
-            .find("ip daddr @denied_private_cidrs_v4 drop")
-            .unwrap();
-        let web_pos = rules
-            .find("tcp dport { 80, 443, 8080, 8443 } accept")
-            .unwrap();
-        assert!(denied_pos < web_pos);
         assert!(rules.contains("elements = { 93.184.216.34/32 }"));
         assert!(rules.contains("elements = { 2606:4700:4700::1111/128 }"));
+        assert!(rules.contains("ip daddr @allowed_targets_v4 accept"));
+        assert!(rules.contains("ip6 daddr @allowed_targets_v6 accept"));
+        assert!(!rules.contains("tcp dport { 80, 443, 8080, 8443 } accept"));
+        assert!(!rules.contains("web audit egress"));
+    }
+
+    #[test]
+    fn remote_mode_without_allowlist_or_proxy_fails_closed() {
+        let manager = EgressManager::new().with_mock_mode(true);
+        let config = EgressConfig {
+            mode: AuditMode::Remote,
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            manager.apply_rules(&config),
+            Err(EgressError::InvalidPolicy(_))
+        ));
+    }
+
+    #[test]
+    fn unbounded_allowlist_is_rejected() {
+        let manager = EgressManager::new().with_mock_mode(true);
+        let config = EgressConfig {
+            mode: AuditMode::Remote,
+            allowed_cidrs: vec!["0.0.0.0/0".to_string()],
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            manager.apply_rules(&config),
+            Err(EgressError::InvalidPolicy(_))
+        ));
+    }
+
+    #[test]
+    fn invalid_cidr_is_rejected_before_nftables() {
+        let manager = EgressManager::new().with_mock_mode(true);
+        let config = EgressConfig {
+            mode: AuditMode::Remote,
+            allowed_cidrs: vec!["93.184.216.34/32 }\nflush ruleset\n".to_string()],
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            manager.apply_rules(&config),
+            Err(EgressError::InvalidAddress(_))
+        ));
+    }
+
+    #[test]
+    fn proxy_target_is_not_interpolated_into_nftables_source() {
+        let manager = EgressManager::new().with_mock_mode(true);
+        let config = EgressConfig {
+            mode: AuditMode::Remote,
+            proxy_enabled: true,
+            proxy_target: Some("http://proxy.example:8080\nflush ruleset".to_string()),
+            allowed_cidrs: vec!["203.0.113.7/32".to_string()],
+            ..Default::default()
+        };
+        let rules = manager.compile_nftables_rules(&config);
+
+        assert!(!rules.contains("proxy.example"));
+        assert!(!rules.contains("flush ruleset\nflush ruleset"));
+        assert!(rules.contains("Upstream proxy endpoint is pinned in allowed CIDRs"));
     }
 
     #[test]

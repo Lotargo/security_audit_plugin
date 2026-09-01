@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { RatchetBridge } from './security/ratchet_bridge.js';
 import { JailGuard } from './security/jail.js';
+import { normalizeCidrList, resolveScopeTargets } from './security/scope_resolver.js';
 import { DockerRunner } from '../docker/runner.js';
 
 export interface ScopeOptions {
@@ -184,11 +185,31 @@ export class SandboxBridge {
 
     const enableTor = options.proxy === 'tor' || options.proxy === 'socks5://127.0.0.1:9050';
     const proxyTarget = options.proxy && !enableTor ? options.proxy : undefined;
+    const networkedMode = options.mode === 'remote' || options.mode === 'hybrid';
+
+    const resolvedTargets = networkedMode
+      ? await resolveScopeTargets(options.targets || [])
+      : [];
+    const explicitAllowed = normalizeCidrList(options.allowed_cidrs || [], 'allowed CIDR');
+    const proxyCidrs = networkedMode && proxyTarget
+      ? await resolveScopeTargets([proxyTarget])
+      : [];
+    const allowedCidrs = [...new Set([...resolvedTargets, ...explicitAllowed, ...proxyCidrs])].sort();
+    const deniedCidrs = options.denied_cidrs
+      ? normalizeCidrList(options.denied_cidrs, 'denied CIDR')
+      : undefined;
+
+    if (networkedMode && allowedCidrs.length === 0 && !enableTor && !proxyTarget) {
+      throw new Error(
+        'Remote/hybrid scope requires at least one target, allowed CIDR, Tor, or upstream proxy'
+      );
+    }
+
     const payload = {
       mode: options.mode,
       targets: options.targets || [],
-      allowed_cidrs: options.allowed_cidrs || [],
-      denied_cidrs: options.denied_cidrs,
+      allowed_cidrs: allowedCidrs,
+      denied_cidrs: deniedCidrs,
       tor_enabled: enableTor,
       proxy_enabled: Boolean(proxyTarget),
       proxy_target: proxyTarget || null,
