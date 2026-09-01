@@ -71,7 +71,10 @@ impl TmuxManager {
         session_name: &str,
         initial_command: Option<&str>,
     ) -> Result<(), TmuxError> {
-        info!("Starting unprivileged tmux audit session '{}'", session_name);
+        info!(
+            "Starting unprivileged tmux audit session '{}'",
+            session_name
+        );
 
         #[cfg(target_os = "linux")]
         {

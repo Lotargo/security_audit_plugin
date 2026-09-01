@@ -437,8 +437,12 @@ lo\t0000007F\t00000000\t0001\t0\t0\t0\t000000FF\t0\t0\t0\n";
         };
         let rules = manager.compile_nftables_rules(&config);
 
-        let denied_pos = rules.find("ip daddr @denied_private_cidrs_v4 drop").unwrap();
-        let web_pos = rules.find("tcp dport { 80, 443, 8080, 8443 } accept").unwrap();
+        let denied_pos = rules
+            .find("ip daddr @denied_private_cidrs_v4 drop")
+            .unwrap();
+        let web_pos = rules
+            .find("tcp dport { 80, 443, 8080, 8443 } accept")
+            .unwrap();
         assert!(denied_pos < web_pos);
         assert!(rules.contains("elements = { 93.184.216.34/32 }"));
         assert!(rules.contains("elements = { 2606:4700:4700::1111/128 }"));

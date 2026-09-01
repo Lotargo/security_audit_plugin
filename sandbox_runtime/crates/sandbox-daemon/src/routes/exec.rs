@@ -1,10 +1,10 @@
 use axum::{http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::path::PathBuf;
-use std::time::Duration;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
+use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
@@ -87,7 +87,9 @@ pub async fn handle_execute(
             warn!("Command execution timed out after {:?}", timeout_duration);
             return Err((
                 StatusCode::GATEWAY_TIMEOUT,
-                Json(json!({"error": format!("Command timed out after {}s", timeout_duration.as_secs())})),
+                Json(
+                    json!({"error": format!("Command timed out after {}s", timeout_duration.as_secs())}),
+                ),
             ));
         }
     };
