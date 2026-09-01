@@ -39,6 +39,27 @@ fn planned_rules(config: &EgressConfig, audit_uid: u32) -> Vec<Vec<String>> {
     ];
 
     if config.tor_enabled {
+        // A Tor scope must not leak or exfiltrate target names through the container resolver.
+        // Managed browser/probe traffic delegates hostname resolution to the SOCKS proxy instead.
+        rules.push(vec![
+            "meta".into(),
+            "skuid".into(),
+            audit_uid.to_string(),
+            "udp".into(),
+            "dport".into(),
+            "53".into(),
+            "reject".into(),
+        ]);
+        rules.push(vec![
+            "meta".into(),
+            "skuid".into(),
+            audit_uid.to_string(),
+            "tcp".into(),
+            "dport".into(),
+            "53".into(),
+            "reject".into(),
+        ]);
+
         let (denied_v4, denied_v6) = split_ip_families(&config.denied_cidrs);
         if !denied_v4.is_empty() {
             rules.push(vec![
@@ -92,7 +113,8 @@ fn insert_output_rule(rule: &[String]) -> Result<(), ContainmentError> {
 /// Adds process-identity isolation on top of the CIDR RoE ruleset.
 ///
 /// `nft insert` prepends rules, so they are installed in reverse order to preserve the desired
-/// evaluation order: agent Tor denial first, Tor private-range denial second, Tor relay egress last.
+/// evaluation order: agent Tor/DNS denial first, Tor private-range denial second, Tor relay egress
+/// last.
 pub fn apply_runtime_containment(config: &EgressConfig) -> Result<(), ContainmentError> {
     let (audit_uid, _) =
         configured_audit_exec_identity().ok_or(ContainmentError::MissingAuditIdentity)?;
@@ -139,7 +161,7 @@ mod tests {
     }
 
     #[test]
-    fn tor_containment_denies_private_ranges_before_relay_egress() {
+    fn tor_containment_blocks_agent_dns_and_denies_private_relays() {
         let config = EgressConfig {
             mode: AuditMode::Remote,
             tor_enabled: true,
@@ -147,6 +169,13 @@ mod tests {
         };
         let rules = planned_rules(&config, 1001);
         let rendered: Vec<String> = rules.iter().map(|rule| rule.join(" ")).collect();
+
+        assert!(rendered
+            .iter()
+            .any(|rule| rule == "meta skuid 1001 udp dport 53 reject"));
+        assert!(rendered
+            .iter()
+            .any(|rule| rule == "meta skuid 1001 tcp dport 53 reject"));
 
         let private_v4 = rendered
             .iter()
