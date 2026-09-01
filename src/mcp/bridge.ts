@@ -352,9 +352,17 @@ export class SandboxBridge {
   }
 
   public async killSwitch(reason: string = 'Manual kill switch triggered'): Promise<any> {
-    const result = await this.request('POST', '/emergency_isolate', { reason });
+    // Latch the host-side scope closed before touching the daemon. If the kernel blackout request
+    // fails or the daemon dies while applying it, managed calls must not retain the previous scope.
     this.activeNetworkScope = { mode: 'local', targetHosts: [], proxy: null };
-    return result;
+    try {
+      return await this.request('POST', '/emergency_isolate', { reason });
+    } catch (err) {
+      // A failed emergency isolation RPC cannot be treated as recoverable while the old container
+      // may still have an active egress ruleset. Force-stop it so the failure mode is fail-closed.
+      this.docker.stop();
+      throw err;
+    }
   }
 
   public async armCanary(tokenLabel: string = 'default_audit_canary'): Promise<any> {

@@ -1,4 +1,4 @@
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(test)))]
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use thiserror::Error;
@@ -17,20 +17,25 @@ pub enum PanicError {
 pub struct KillSwitch;
 
 impl KillSwitch {
-    /// Returns true if the sandbox network is currently locked down in emergency isolation mode
+    /// Returns true if emergency isolation has been latched for this runtime.
     pub fn is_isolated() -> bool {
         IS_ISOLATED.load(Ordering::SeqCst)
     }
 
-    /// Resets isolation status (e.g. during clean container respawn or re-provision)
+    /// Resets isolation status (e.g. during clean container respawn or re-provision).
     pub fn reset_isolation() {
         IS_ISOLATED.store(false, Ordering::SeqCst);
         info!("Isolation status reset to normal.");
     }
 
     /// Triggers immediate hardware L2/L3 network blackout:
-    /// 1. Flushes all conntrack active tracking tables (`conntrack -F`)
-    /// 2. Replaces all nftables rules with DROP ALL on all chains
+    /// 1. Flushes all conntrack active tracking tables (`conntrack -F`).
+    /// 2. Replaces nftables with a DROP-by-default policy that preserves only loopback and the
+    ///    authenticated management RPC channel.
+    ///
+    /// In the real Linux sandbox, failure to install the nftables policy aborts PID 1. Keeping a
+    /// container alive with the previous egress policy after an emergency isolation request would
+    /// be a fail-open condition, so process termination is the only safe fallback.
     pub fn trigger(reason: &str) -> Result<(), PanicError> {
         error!("!!! EMERGENCY KILL SWITCH TRIGGERED !!! Reason: {}", reason);
         IS_ISOLATED.store(true, Ordering::SeqCst);
@@ -57,48 +62,58 @@ table inet filter {{
 "#
         );
 
-        #[cfg(target_os = "linux")]
+        #[cfg(all(target_os = "linux", not(test)))]
         {
             use std::io::Write;
 
-            // 1. Flush conntrack connections (best effort)
+            // Existing connections should not survive the transition. Conntrack flushing is
+            // best-effort; the replacement nftables policy is the mandatory security boundary.
             let _ = Command::new("conntrack").arg("-F").status();
 
-            // 2. Lock down nftables (if running with CAP_NET_ADMIN / in container)
-            if let Ok(mut child) = Command::new("nft")
-                .arg("-f")
-                .arg("-")
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-            {
-                if let Some(mut stdin) = child.stdin.take() {
-                    let _ = stdin.write_all(blackout_rules.as_bytes());
-                }
+            let apply_result: Result<(), PanicError> = (|| {
+                let mut child = Command::new("nft")
+                    .arg("-f")
+                    .arg("-")
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()?;
 
-                if let Ok(output) = child.wait_with_output() {
-                    if !output.status.success() {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        error!("Kill switch nft warning: {}", stderr);
-                    }
+                let mut stdin = child.stdin.take().ok_or_else(|| {
+                    PanicError::ExecutionFailed(
+                        "nft child did not expose stdin for blackout rules".to_string(),
+                    )
+                })?;
+                stdin.write_all(blackout_rules.as_bytes())?;
+                drop(stdin);
+
+                let output = child.wait_with_output()?;
+                if !output.status.success() {
+                    return Err(PanicError::ExecutionFailed(
+                        String::from_utf8_lossy(&output.stderr).into_owned(),
+                    ));
                 }
-            } else {
-                info!(
-                    "Non-privileged/CI environment: Emergency blackout rules compiled in memory."
+                Ok(())
+            })();
+
+            if let Err(err) = apply_result {
+                error!(
+                    "Emergency nftables isolation failed: {}. Aborting sandbox runtime fail-closed.",
+                    err
                 );
+                std::process::abort();
             }
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(any(not(target_os = "linux"), test))]
         {
             info!(
-                "Non-Linux platform: Emergency blackout rules compiled in memory:\n{}",
+                "Test/non-Linux platform: Emergency blackout rules compiled in memory:\n{}",
                 blackout_rules
             );
         }
 
-        info!("Sandbox network has been completely severed and isolated.");
+        info!("Sandbox network has been severed except for the management channel.");
         Ok(())
     }
 }

@@ -11,18 +11,33 @@ const describeDocker = enabled ? describe : describe.skip;
 describeDocker('live Docker host-to-sandbox roundtrip & escape-regression suite', () => {
   let bridge: SandboxBridge;
   let workspace: string;
+  let hostProbeServer: http.Server;
   const port = 19099;
+  const hostProbePort = 19101;
 
   beforeAll(async () => {
     workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'security-audit-docker-e2e-'));
+
+    hostProbeServer = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('HOST_PROBE_OK');
+    });
+    await new Promise<void>((resolve, reject) => {
+      hostProbeServer.once('error', reject);
+      hostProbeServer.listen(hostProbePort, '0.0.0.0', () => resolve());
+    });
+
     bridge = new SandboxBridge({ workspaceRoot: workspace, hostPort: port });
     await bridge.ensureRuntime();
   }, 60_000);
 
-  afterAll(() => {
+  afterAll(async () => {
     try {
       bridge?.getDocker().stop();
     } finally {
+      if (hostProbeServer) {
+        await new Promise<void>((resolve) => hostProbeServer.close(() => resolve()));
+      }
       if (workspace) fs.rmSync(workspace, { recursive: true, force: true });
     }
   });
@@ -274,20 +289,42 @@ describeDocker('live Docker host-to-sandbox roundtrip & escape-regression suite'
   });
 
   describe('Emergency Kill Switch & Hard Reset Lifecycle (Points 14, 15)', () => {
-    it('returns runtime to fail-closed state upon killSwitch invocation (Point 14)', async () => {
+    it('proves killSwitch transitions a previously reachable scoped destination to fail-closed (Point 14)', async () => {
+      // Use a deterministic server on the Docker host rather than relying on public Internet
+      // availability. The container default gateway is outside loopback, so the kill-switch output
+      // policy must actually block this connection after the transition.
+      const gatewayResult = await bridge.exec("ip route show default | awk 'NR==1 {print $3}'");
+      expect(gatewayResult.exit_code).toBe(0);
+      const gateway = gatewayResult.stdout.trim();
+      expect(gateway).toMatch(/^\d{1,3}(?:\.\d{1,3}){3}$/);
+
+      const directScope = await bridge.setScope({
+        mode: 'remote',
+        targets: [gateway],
+        denied_cidrs: [],
+        arm_canaries: false,
+      });
+      expect(directScope.status).toBe('success');
+
+      const egressBeforeKill = await bridge.exec(
+        `curl -fsS --connect-timeout 2 --max-time 3 http://${gateway}:${hostProbePort}/`
+      );
+      expect(egressBeforeKill.exit_code).toBe(0);
+      expect(egressBeforeKill.stdout).toContain('HOST_PROBE_OK');
+
       const killResult = await bridge.killSwitch('Adversarial validation test');
       expect(killResult.status).toBe('isolated');
       expect(killResult.is_isolated).toBe(true);
 
       const egressAfterKill = await bridge.exec(
-        'curl -fsS --connect-timeout 2 --max-time 3 http://93.184.216.34 >/dev/null'
+        `curl -fsS --connect-timeout 2 --max-time 3 http://${gateway}:${hostProbePort}/`
       );
       expect(egressAfterKill.exit_code).not.toBe(0);
 
-      await expect(bridge.httpProbe({ url: 'http://127.0.0.1:18080/' })).rejects.toThrow(
+      await expect(bridge.httpProbe({ url: `http://${gateway}:${hostProbePort}/` })).rejects.toThrow(
         'require an explicit remote or hybrid scope'
       );
-    }, 15_000);
+    }, 20_000);
 
     it('clears previous network scope, Tor state, and egress capability after hard reset (Point 15)', async () => {
       const resetResult = await bridge.reset(true);
