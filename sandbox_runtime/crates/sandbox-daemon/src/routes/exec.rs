@@ -9,6 +9,7 @@ use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
 
+#[cfg(not(target_os = "windows"))]
 use sandbox_kernel::audit_exec_identity;
 use sandbox_kernel::tmux::TmuxManager;
 use sandbox_kernel::watchdog::{process_command_output, WatchdogResult};

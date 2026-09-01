@@ -409,7 +409,7 @@ impl EgressManager {
 
     pub fn apply_rules(&self, config: &EgressConfig) -> Result<(), EgressError> {
         self.validate_config(config)?;
-        let rules = self.compile_nftables_rules(config);
+        let _rules = self.compile_nftables_rules(config);
         info!("Applying nftables ruleset for mode: {:?}", config.mode);
 
         if self.mock_mode {
@@ -427,7 +427,7 @@ impl EgressManager {
                 .spawn()?;
 
             if let Some(mut stdin) = child.stdin.take() {
-                stdin.write_all(rules.as_bytes())?;
+                stdin.write_all(_rules.as_bytes())?;
             }
 
             let output = child.wait_with_output()?;

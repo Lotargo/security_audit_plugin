@@ -77,6 +77,12 @@ export async function resolveScopeTargets(
       continue;
     }
 
+    if (hostname.endsWith('.onion')) {
+      // .onion addresses cannot be resolved via traditional DNS on the host.
+      // SOCKS proxy handles remote resolution in Tor mode.
+      continue;
+    }
+
     let addresses: string[];
     try {
       addresses = await resolveHost(hostname);

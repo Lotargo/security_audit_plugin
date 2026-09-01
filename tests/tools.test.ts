@@ -35,7 +35,6 @@ describe('MCP Tools Registration & Dispatch Test Suite', () => {
       'sandbox_start_background',
       'sandbox_poll_logs',
       'sandbox_browser_audit',
-      'sandbox_bundle_extract',
       'sandbox_http_probe',
       'sandbox_kill_switch',
       'sandbox_reset',
@@ -43,6 +42,7 @@ describe('MCP Tools Registration & Dispatch Test Suite', () => {
       'sandbox_fs_write',
     ];
 
+    expect(registeredTools.size).toBe(expectedTools.length);
     for (const toolName of expectedTools) {
       expect(registeredTools.has(toolName)).toBe(true);
       const toolDef = registeredTools.get(toolName)!;

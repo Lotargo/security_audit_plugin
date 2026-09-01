@@ -9,87 +9,18 @@ import stealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { setupHumanCursor, humanDelay, humanScroll } from './mouse_bezier.js';
 import { WafDetector } from './waf_detector.js';
 import { runDecoyBurst } from './decoy_traffic.js';
-import fs from 'fs/promises';
-import path from 'path';
-import dns from 'dns/promises';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {
+  classifyUrl,
+  normalizeHost,
+  normalizeAllowedHosts,
+  isPrivateOrRestrictedIp,
+} from './browser_guard.js';
 
 chromium.use(stealthPlugin());
 
-function normalizeHost(host) {
-  const value = String(host || '').trim().toLowerCase();
-  return value.startsWith('[') && value.endsWith(']') ? value.slice(1, -1) : value;
-}
-
-function normalizeAllowedHosts(value) {
-  if (!Array.isArray(value)) return [];
-  return [...new Set(value.map(normalizeHost).filter(Boolean))].sort();
-}
-
-function isPrivateOrRestrictedIp(ipStr) {
-  if (!ipStr) return true;
-  const ip = normalizeHost(ipStr);
-
-  if (ip.startsWith('127.') || ip === '0.0.0.0') return true;
-  if (ip.startsWith('10.') || ip.startsWith('192.168.')) return true;
-  if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(ip)) return true;
-  if (ip.startsWith('169.254.')) return true;
-  if (/^100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\./.test(ip)) return true;
-  if (
-    ip === '::1' ||
-    ip === '::' ||
-    ip.startsWith('fe80:') ||
-    ip.startsWith('fc00:') ||
-    ip.startsWith('fd00:')
-  )
-    return true;
-  if (ip.startsWith('::ffff:') || ip.startsWith('64:ff9b:')) {
-    const v4part = ip.split(':').pop();
-    if (v4part && isPrivateOrRestrictedIp(v4part)) return true;
-  }
-  return false;
-}
-
-async function classifyUrl(urlStr, allowPrivate = false, allowedHosts = [], resolveDns = true) {
-  try {
-    const parsed = new URL(urlStr);
-    if (!['http:', 'https:'].includes(parsed.protocol)) {
-      return { ok: false, reason: `Unsupported protocol: ${parsed.protocol}` };
-    }
-
-    const host = normalizeHost(parsed.hostname);
-    if (allowedHosts.length > 0 && !allowedHosts.includes(host)) {
-      return { ok: false, reason: `Host is outside active RoE scope: ${host}` };
-    }
-
-    if (allowPrivate) return { ok: true, reason: 'allow_private' };
-
-    const literalIp = /^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host.includes(':');
-    if (literalIp && isPrivateOrRestrictedIp(host)) {
-      return { ok: false, reason: `Direct private IP access blocked: ${host}` };
-    }
-
-    // With a scoped SOCKS proxy the destination hostname must be resolved by the proxy itself.
-    // Local dns.lookup() here would leak the target and would also make .onion destinations fail.
-    if (!resolveDns) {
-      return { ok: true, reason: 'scoped_proxy_dns' };
-    }
-
-    try {
-      const records = await dns.lookup(host, { all: true });
-      for (const record of records) {
-        if (isPrivateOrRestrictedIp(record.address)) {
-          return { ok: false, reason: `DNS resolves to restricted private IP: ${host} -> ${record.address}` };
-        }
-      }
-    } catch (dnsErr) {
-      return { ok: false, reason: `DNS resolution failed for ${host}: ${dnsErr.message}` };
-    }
-
-    return { ok: true, reason: 'public' };
-  } catch (err) {
-    return { ok: false, reason: `URL parse error: ${err.message}` };
-  }
-}
+export { classifyUrl, normalizeHost, normalizeAllowedHosts, isPrivateOrRestrictedIp };
 
 async function readConfig() {
   const args = process.argv.slice(2);
@@ -111,25 +42,24 @@ async function readConfig() {
   throw new Error('Browser audit requires an explicit target URL');
 }
 
-async function runAudit() {
+export async function runAudit() {
   const config = await readConfig();
   const targetUrl = config.url;
   if (!targetUrl) throw new Error('Browser audit config is missing url');
 
   const allowedHosts = normalizeAllowedHosts(config.allowed_hosts);
   const proxyUrl = config.proxy || process.env.AUDIT_PROXY;
+  const isTor = Boolean(
+    config.is_tor ||
+    (proxyUrl && (proxyUrl.includes('9050') || proxyUrl.includes('tor')))
+  );
+
   if (proxyUrl && allowedHosts.length === 0) {
     throw new Error('Proxy browser audits require an explicit RoE host allowlist');
   }
 
   const allowPrivate = config.allow_private === true;
-  const resolveDnsLocally = !proxyUrl;
-  const initialCheck = await classifyUrl(
-    targetUrl,
-    allowPrivate,
-    allowedHosts,
-    resolveDnsLocally
-  );
+  const initialCheck = await classifyUrl(targetUrl, allowPrivate, allowedHosts, isTor);
   if (!initialCheck.ok) {
     throw new Error(`Target blocked by scope/SSRF guard: ${initialCheck.reason}`);
   }
@@ -185,10 +115,13 @@ async function runAudit() {
   if (humanize) setupHumanCursor(page);
 
   await page.route('**/*', async (route) => {
-    const reqUrl = route.request().url();
-    const check = await classifyUrl(reqUrl, allowPrivate, allowedHosts, resolveDnsLocally);
+    const request = route.request();
+    const reqUrl = request.url();
+    const check = await classifyUrl(reqUrl, allowPrivate, allowedHosts, isTor);
     if (!check.ok) {
-      console.error(`[RoE-Guard] Aborted forbidden destination: ${check.reason}`);
+      console.error(
+        `[RoE-Guard] Aborted forbidden destination (${request.resourceType()} -> ${reqUrl}): ${check.reason}`
+      );
       await route.abort('blockedbyclient');
       return;
     }
@@ -216,7 +149,27 @@ async function runAudit() {
 
   try {
     if (config.generate_decoy_noise === true) {
-      await runDecoyBurst(2, 100, 350);
+      if (allowedHosts.length === 0) {
+        console.error('[RoE-Guard] Decoy noise suppressed: no active scope allowlist provided.');
+      } else {
+        const inScopeDecoys = [
+          'https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap',
+          'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
+          'https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css',
+        ].filter((assetUrl) => {
+          try {
+            const h = normalizeHost(new URL(assetUrl).hostname);
+            return allowedHosts.includes(h);
+          } catch {
+            return false;
+          }
+        });
+        if (inScopeDecoys.length > 0) {
+          await runDecoyBurst(2, 100, 350);
+        } else {
+          console.error('[RoE-Guard] Decoy traffic suppressed because external decoy assets are outside RoE scope.');
+        }
+      }
     }
 
     if (!skipWarmup) {
@@ -224,16 +177,13 @@ async function runAudit() {
         const urlObj = new URL(targetUrl);
         const rootUrl = `${urlObj.protocol}//${urlObj.host}/`;
         if (rootUrl !== targetUrl && rootUrl !== targetUrl + '/') {
-          const warmupCheck = await classifyUrl(
-            rootUrl,
-            allowPrivate,
-            allowedHosts,
-            resolveDnsLocally
-          );
+          const warmupCheck = await classifyUrl(rootUrl, allowPrivate, allowedHosts, isTor);
           if (warmupCheck.ok) {
             console.error(`[*] Performing Warmup Hop on site root: ${rootUrl}`);
             await page.goto(rootUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
             if (humanize) await humanDelay(1000, 2000);
+          } else {
+            console.error(`[RoE-Guard] Warmup Hop skipped: site root ${rootUrl} is outside scope`);
           }
         }
       } catch {
@@ -328,7 +278,12 @@ async function runAudit() {
   console.log(JSON.stringify(auditReport));
 }
 
-runAudit().catch((err) => {
-  console.error('[FATAL] Stealth browser execution failed:', err.message);
-  process.exit(1);
-});
+if (
+  process.argv[1] &&
+  (process.argv[1].endsWith('browser_launcher.js') || process.argv[1].endsWith('browser_launcher.mjs'))
+) {
+  runAudit().catch((err) => {
+    console.error('[FATAL] Stealth browser execution failed:', err.message);
+    process.exit(1);
+  });
+}

@@ -4,8 +4,6 @@ use thiserror::Error;
 #[allow(unused_imports)]
 use tracing::{error, info, warn};
 
-use crate::privilege::configured_audit_exec_identity;
-
 #[derive(Error, Debug)]
 pub enum TmuxError {
     #[error("Tmux execution failed: {0}")]

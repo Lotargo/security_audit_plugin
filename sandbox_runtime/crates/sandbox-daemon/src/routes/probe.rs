@@ -88,15 +88,27 @@ pub async fn handle_http_probe(
         ));
     }
 
+    let effective_redirect_hosts = if allowed_hosts.is_empty() {
+        if let Some(target_host) = parsed_target.host_str().map(normalize_host) {
+            let mut set = HashSet::new();
+            set.insert(target_host);
+            set
+        } else {
+            allowed_hosts.clone()
+        }
+    } else {
+        allowed_hosts.clone()
+    };
+
     info!(
         "Sending HTTP probe: {} {} (proxy: {:?}, scope_hosts: {})",
         method_str,
         payload.url,
         payload.proxy,
-        allowed_hosts.len()
+        effective_redirect_hosts.len()
     );
 
-    let redirect_hosts = allowed_hosts.clone();
+    let redirect_hosts = effective_redirect_hosts;
     let redirect_policy = reqwest::redirect::Policy::custom(move |attempt| {
         if attempt.previous().len() >= 10 {
             return attempt.error(IoError::new(
@@ -122,7 +134,13 @@ pub async fn handle_http_probe(
         .danger_accept_invalid_certs(true);
 
     if let Some(proxy_url) = payload.proxy.as_deref() {
-        match reqwest::Proxy::all(proxy_url) {
+        let normalized_proxy = if let Some(stripped) = proxy_url.strip_prefix("socks5://") {
+            format!("socks5h://{stripped}")
+        } else {
+            proxy_url.to_string()
+        };
+
+        match reqwest::Proxy::all(&normalized_proxy) {
             Ok(p) => {
                 client_builder = client_builder.proxy(p);
             }
@@ -264,5 +282,28 @@ mod tests {
         let allowed = normalize_allowed_hosts(None);
         let url = reqwest::Url::parse("https://203.0.113.7/").unwrap();
         assert!(url_matches_scope(&url, &allowed));
+    }
+
+    #[test]
+    fn redirect_matches_allowed_scope_or_fails_closed() {
+        let allowed = normalize_allowed_hosts(Some(vec!["target.example".to_string()]));
+
+        let initial_url = reqwest::Url::parse("https://target.example/redirect").unwrap();
+        let same_host_target = reqwest::Url::parse("https://target.example/dashboard").unwrap();
+        let cross_host_target = reqwest::Url::parse("https://attacker.example/steal").unwrap();
+
+        assert!(url_matches_scope(&initial_url, &allowed));
+        assert!(url_matches_scope(&same_host_target, &allowed));
+        assert!(!url_matches_scope(&cross_host_target, &allowed));
+    }
+
+    #[test]
+    fn non_http_urls_are_denied_by_scope() {
+        let allowed = normalize_allowed_hosts(Some(vec!["target.example".to_string()]));
+        let file_url = reqwest::Url::parse("file:///etc/passwd").unwrap();
+        let gopher_url = reqwest::Url::parse("gopher://target.example/").unwrap();
+
+        assert!(!url_matches_scope(&file_url, &allowed));
+        assert!(!url_matches_scope(&gopher_url, &allowed));
     }
 }
