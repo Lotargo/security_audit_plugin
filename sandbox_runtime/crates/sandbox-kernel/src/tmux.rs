@@ -25,13 +25,18 @@ impl TmuxManager {
         {
             let mut reaped = 0;
             // 1. List active tmux sessions and kill lingering ones
-            if let Ok(output) = Command::new("tmux").args(["list-sessions", "-F", "#{session_name}"]).output() {
+            if let Ok(output) = Command::new("tmux")
+                .args(["list-sessions", "-F", "#{session_name}"])
+                .output()
+            {
                 if output.status.success() {
                     let session_names = String::from_utf8_lossy(&output.stdout);
                     for name in session_names.lines() {
                         let trimmed = name.trim();
                         if !trimmed.is_empty() {
-                            let _ = Command::new("tmux").args(["kill-session", "-t", trimmed]).status();
+                            let _ = Command::new("tmux")
+                                .args(["kill-session", "-t", trimmed])
+                                .status();
                             reaped += 1;
                         }
                     }
@@ -190,7 +195,10 @@ impl TmuxManager {
 
     /// Resets session log offset tracking
     pub fn reset_session_log_offset(_session_name: &str) -> Result<(), TmuxError> {
-        info!("Resetting session log offset for session '{}'", _session_name);
+        info!(
+            "Resetting session log offset for session '{}'",
+            _session_name
+        );
         Ok(())
     }
 

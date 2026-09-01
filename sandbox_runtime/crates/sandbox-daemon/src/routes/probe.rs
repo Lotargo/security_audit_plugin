@@ -149,8 +149,12 @@ pub async fn handle_http_probe(
     let potential_deception = match status {
         404 | 503 | 500 | 403 => {
             // If body has valid non-error payload, substantial JSON or full HTML layout
-            (body.len() > 1000 && !body_lower.contains("not found") && !body_lower.contains("internal server error"))
-                || (body.starts_with('{') && body.contains("\"status\"") && !body_lower.contains("error"))
+            (body.len() > 1000
+                && !body_lower.contains("not found")
+                && !body_lower.contains("internal server error"))
+                || (body.starts_with('{')
+                    && body.contains("\"status\"")
+                    && !body_lower.contains("error"))
         }
         _ => false,
     };
