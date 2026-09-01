@@ -6,7 +6,9 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ContainmentError {
-    #[error("AUDIT_EXEC_UID/AUDIT_EXEC_GID must be configured before applying runtime containment")]
+    #[error(
+        "AUDIT_EXEC_UID/AUDIT_EXEC_GID must be configured before applying runtime containment"
+    )]
     MissingAuditIdentity,
     #[error("Failed to apply runtime containment rule: {0}")]
     RuleFailed(String),

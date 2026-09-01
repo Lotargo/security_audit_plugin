@@ -61,7 +61,9 @@ pub async fn handle_rotate_tor(
     if !auth_resp.starts_with("250") {
         return Err((
             StatusCode::BAD_GATEWAY,
-            Json(json!({"error": format!("Tor cookie authentication rejected: {}", auth_resp.trim())})),
+            Json(
+                json!({"error": format!("Tor cookie authentication rejected: {}", auth_resp.trim())}),
+            ),
         ));
     }
 
