@@ -1,16 +1,19 @@
 # Security Audit Plugin
 
-Security audit tooling and an isolated Docker execution sandbox for AI coding agents (Google Antigravity, OpenCode, Claude Code, OpenAI Codex, Cursor).
+Security audit tooling and an isolated Docker execution sandbox for AI coding agents (Google Antigravity, OpenCode, Claude Code, OpenAI Codex, Gemini CLI, Cursor).
 
 The project combines a TypeScript MCP host bridge, a Rust sandbox daemon/kernel layer, a scoped Chromium audit runner, managed Tor routing, and 19 AgentSkills for static and dynamic security assessment workflows.
 
 ## Current Architecture
 
-- **Host:** TypeScript / Node.js MCP server, CLI, Ratchet Bridge, Docker lifecycle manager, and programmatic SARIF v2.1.0 builder.
+- **Host:** TypeScript / Node.js MCP server, CLI, client integration manager, Ratchet Bridge, Docker lifecycle manager, and programmatic SARIF v2.1.0 builder.
 - **Sandbox:** Rust (Axum/Tokio daemon, authenticated control plane, nftables RoE policy, process-identity containment, watchdogs, emergency isolation) plus Node.js/Chromium for managed browser audits.
 - **Network:** fail-closed local startup, explicit remote/hybrid scope provisioning, host-pinned direct targets, and an embedded Tor service isolated behind dedicated runtime identities.
+- **Client integration:** native MCP lifecycle commands where supported, ownership-checked config fallbacks, and a direct Node launcher for Codex.
 
 The runtime intentionally prefers failing closed over silently exposing partially implemented capabilities. External upstream HTTP/SOCKS intercepting proxies and automatic bundle extraction are not currently exposed as MCP tools.
+
+The plugin does **not** read, copy, proxy, or store model-provider credentials from Codex, Claude Code, OpenCode, Gemini CLI, or Antigravity. Each client keeps its own authentication and subscription state; the client only launches this package as an MCP server over STDIO.
 
 ---
 
@@ -66,6 +69,26 @@ The runtime intentionally prefers failing closed over silently exposing partiall
 - Audit artifacts can be read and written through the jailed workspace filesystem MCP tools.
 - There is currently no dedicated `sandbox_sarif_export` MCP tool; AgentSkills should generate/report through the available programmatic or filesystem workflow instead of assuming one exists.
 
+### 7. Client CLI Integration
+
+The client integration layer follows the same native-first pattern used by `@lotargo/memory_plugin`:
+
+1. discover the real client configuration path;
+2. use the client's native MCP lifecycle command when one is available;
+3. verify that the expected owned registration actually appeared;
+4. fall back to a minimal ownership-checked config edit when the CLI is missing, old, or non-functional;
+5. refuse to overwrite a same-name registration that is not recognized as owned by this package.
+
+Supported setup paths:
+
+- **Claude Code:** native `claude mcp add` with `~/.claude.json` fallback;
+- **Gemini CLI:** native `gemini mcp add` with `~/.gemini/settings.json` fallback;
+- **Codex:** native `codex mcp add`, normalized to a direct `node -> bin/cli.js mcp` launcher in `~/.codex/config.toml`;
+- **OpenCode:** local MCP entry in `~/.config/opencode/opencode.json` (or `OPENCODE_CONFIG_DIR`);
+- **Antigravity:** `~/.gemini/config/mcp_config.json`, plus optional workspace-local `.agents/mcp_config.json`.
+
+Codex has an additional protocol smoke test via `doctor --codex`: it validates the TOML registration, starts the configured MCP executable, performs `initialize`, then checks `tools/list` for core sandbox tools.
+
 ---
 
 ## Skills Registry (19 Modules)
@@ -100,6 +123,27 @@ The runtime intentionally prefers failing closed over silently exposing partiall
 
 - Node.js >= 20
 - Docker Desktop or `dockerd`
+- One or more supported AI coding clients if automatic MCP registration is desired
+
+### One-command client setup
+
+Configure all supported client locations, install the 19 skills, and optionally pre-warm the sandbox image:
+
+```bash
+npx @security-audit/plugin setup --docker
+```
+
+Target one client when needed:
+
+```bash
+npx @security-audit/plugin setup --target codex
+npx @security-audit/plugin setup --target claude
+npx @security-audit/plugin setup --target gemini
+npx @security-audit/plugin setup --target opencode
+npx @security-audit/plugin setup --target agy --local
+```
+
+The setup process never imports provider authentication from those clients. It only registers the MCP process and installs the packaged AgentSkills.
 
 ### Environment diagnostics
 
@@ -107,7 +151,15 @@ The runtime intentionally prefers failing closed over silently exposing partiall
 npx @security-audit/plugin doctor
 ```
 
-### Install skills and pre-warm the sandbox
+For the strict Codex integration check:
+
+```bash
+npx @security-audit/plugin doctor --codex
+```
+
+The Codex doctor performs a real STDIO MCP handshake and tool-discovery smoke test using the executable chain stored in `~/.codex/config.toml`.
+
+### Skills-only installation
 
 ```bash
 npx @security-audit/plugin install --docker
@@ -119,6 +171,14 @@ Target-specific examples:
 npx @security-audit/plugin install --target agy --docker
 npx @security-audit/plugin install --target opencode --docker
 npx @security-audit/plugin install --target claude --docker
+npx @security-audit/plugin install --target codex
+npx @security-audit/plugin install --target gemini
+```
+
+Add `--mcp` when using `install` if the selected concrete client should also be registered:
+
+```bash
+npx @security-audit/plugin install --target claude --mcp
 ```
 
 Selective skill installation:
@@ -127,13 +187,13 @@ Selective skill installation:
 npx @security-audit/plugin install --skills web-appsec-dast,injection-input-validation
 ```
 
-### Launch the MCP server
+### Launch the MCP server manually
 
 ```bash
 npx @security-audit/plugin mcp
 ```
 
-Example MCP configuration:
+Generic MCP configuration for clients without a dedicated setup adapter:
 
 ```json
 {
@@ -146,16 +206,28 @@ Example MCP configuration:
 }
 ```
 
+### Remove an owned client registration
+
+```bash
+npx @security-audit/plugin uninstall --target codex --mcp
+npx @security-audit/plugin uninstall --target claude --mcp
+npx @security-audit/plugin uninstall --target opencode --mcp
+```
+
+Uninstall refuses to delete a same-name registration when it cannot prove that the entry belongs to this package.
+
 ---
 
 ## CLI Command Reference
 
 | Command | Description |
 | :--- | :--- |
+| `npx @security-audit/plugin setup` | Install skills and register MCP in supported coding clients |
 | `npx @security-audit/plugin doctor` | Check Node.js, Docker, ports, and skill directories |
-| `npx @security-audit/plugin install` | Install skills and integration configuration |
-| `npx @security-audit/plugin uninstall` | Remove installed skills |
-| `npx @security-audit/plugin init` | Run the interactive setup workflow |
+| `npx @security-audit/plugin doctor --codex` | Validate Codex direct launcher and perform a real MCP protocol smoke test |
+| `npx @security-audit/plugin install` | Install skills; add `--mcp` to register a concrete target client |
+| `npx @security-audit/plugin uninstall` | Remove installed skills; add `--mcp` to remove owned client registration |
+| `npx @security-audit/plugin init` | Run the legacy/local setup workflow |
 | `npx @security-audit/plugin mcp` | Launch the MCP server over STDIO |
 | `npx @security-audit/plugin pull-sandbox` | Pull the sandbox image |
 | `npx @security-audit/plugin build-sandbox` | Build the sandbox image locally |
@@ -196,6 +268,7 @@ These capabilities should not be assumed by AgentSkills until their runtime impl
 - `skills/` - 19 AgentSkills with instructions, examples, scripts, and references.
 - `sandbox_runtime/` - Docker image, Rust kernel/daemon, Chromium runner, and Tor configuration.
 - `src/mcp/` - MCP tools, host bridge, authentication, and workspace jail.
+- `src/cli/integration/` - client paths, native CLI invocation, ownership checks, setup/uninstall adapters, Codex TOML handling, and protocol diagnostics.
 - `src/docker/` - Docker runtime lifecycle management.
 - `src/sarif/` - programmatic SARIF types and builder.
 - `plugins/` - integration manifests for supported agent environments.
@@ -212,5 +285,7 @@ GitHub Actions currently covers:
 - 19-skill ecosystem validation;
 - live authenticated host-to-Docker-to-Rust roundtrip;
 - dependency audit and secret scanning.
+
+Client-integration unit tests additionally cover ownership recognition, JSON fallback registration, OpenCode MCP layout, Codex TOML normalization/conflict handling, and safe removal that preserves unrelated configuration.
 
 See [ROADMAP.md](./ROADMAP.md) for planned extensions.

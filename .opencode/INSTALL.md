@@ -2,38 +2,45 @@
 
 ## Prerequisites
 
-- [OpenCode](https://opencode.ai) installed
+- OpenCode installed
+- Node.js >= 20
+- Docker Desktop or `dockerd`
 
-## Installation
+## Recommended setup
 
-Add security-audit-plugin to the `plugin` array in your `opencode.json` (global or project-level):
+Register the package as a local MCP server and install its AgentSkills with one command:
+
+```bash
+npx @security-audit/plugin setup --target opencode
+```
+
+The installer writes only the owned `security-audit-sandbox` MCP entry and preserves unrelated OpenCode configuration.
+
+OpenCode starts the plugin through STDIO using the package CLI:
 
 ```json
 {
-  "plugin": ["@security-audit/plugin"]
+  "mcp": {
+    "security-audit-sandbox": {
+      "type": "local",
+      "command": ["npx", "-y", "@security-audit/plugin", "mcp"]
+    }
+  }
 }
 ```
 
-Or via Git repository:
+If an existing `security-audit-sandbox` entry is present but is not recognized as owned by this package, setup fails instead of overwriting it.
 
-```json
-{
-  "plugin": ["security-audit@git+https://github.com/Lotargo/security_audit_plugin.git"]
-}
-```
-
-Restart OpenCode. The plugin registers all 19 security audit skills and MCP tools.
-
-## Alternative Zero-Setup Installation (via NPX)
-
-From your terminal, run:
+## Skills only
 
 ```bash
 npx @security-audit/plugin install --target opencode
 ```
 
-To uninstall:
+## Remove skills and the owned MCP registration
 
 ```bash
-npx @security-audit/plugin uninstall --target opencode
+npx @security-audit/plugin uninstall --target opencode --mcp
 ```
+
+The security-audit plugin does not read, copy, or store OpenCode provider credentials. Authentication remains entirely owned by OpenCode and its configured model providers.

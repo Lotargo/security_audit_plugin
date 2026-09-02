@@ -1,7 +1,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { green, red, yellow, bold, cyan, gray } from 'colorette';
+import { green, yellow, bold, cyan, gray } from 'colorette';
 import { resolveDestinationDirs, findSourceSkillsDir } from './install_skills.js';
+import {
+  clientsForInstallTarget,
+  removeClientIntegrations,
+} from '../integration/client_integration.js';
 
 export async function runUninstallSkills(options: {
   target: string;
@@ -69,7 +73,6 @@ export async function runUninstallSkills(options: {
       }
     }
 
-    // Clean up empty destination folder if no skills remain
     try {
       const remaining = fs.readdirSync(destinationDir);
       if (remaining.length === 0) {
@@ -84,6 +87,20 @@ export async function runUninstallSkills(options: {
   }
 
   if (options.mcp) {
-    console.log(bold(yellow('\n[Note] To remove the MCP server, delete the "security-audit-sandbox" entry from your agent MCP config file.\n')));
+    const clients = clientsForInstallTarget(options.target);
+    if (clients.length > 0) {
+      console.log(bold(cyan('\n--- Removing Owned MCP Client Registration(s) ---')));
+      const results = await removeClientIntegrations({ clients });
+      for (const result of results) {
+        if (result.status === 'not_found') {
+          console.log(` ${yellow('•')} ${bold(result.client)}: no owned registration found${result.path ? ` (${gray(result.path)})` : ''}`);
+        } else {
+          console.log(` ${green('✔')} ${bold(result.client)}: removed via ${result.method}${result.path ? ` (${gray(result.path)})` : ''}`);
+          if (result.detail) console.log(gray(`   fallback detail: ${result.detail}`));
+        }
+      }
+    } else {
+      console.log(bold(yellow('\n[Note] This target has no managed client CLI registration to remove.\n')));
+    }
   }
 }

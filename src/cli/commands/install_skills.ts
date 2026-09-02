@@ -3,6 +3,10 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { green, bold, cyan, yellow, gray } from 'colorette';
+import {
+  clientsForInstallTarget,
+  setupClientIntegrations,
+} from '../integration/client_integration.js';
 
 function copyRecursiveSync(src: string, dest: string) {
   const exists = fs.existsSync(src);
@@ -50,6 +54,8 @@ export function resolveDestinationDirs(target: string, customPath?: string): str
       path.resolve(process.cwd(), '.agents', 'skills'),
       path.resolve(process.cwd(), '.opencode', 'skills'),
       path.resolve(process.cwd(), '.claude', 'skills'),
+      path.join(os.homedir(), '.codex', 'skills'),
+      path.join(os.homedir(), '.gemini', 'skills'),
     ];
   }
 
@@ -65,6 +71,11 @@ export function resolveDestinationDirs(target: string, customPath?: string): str
     case 'claude':
     case 'claude-code':
       return [path.resolve(process.cwd(), '.claude', 'skills')];
+    case 'codex':
+      return [path.join(os.homedir(), '.codex', 'skills')];
+    case 'gemini':
+    case 'gemini-cli':
+      return [path.join(os.homedir(), '.gemini', 'skills')];
     case 'custom':
       if (!customPath) {
         throw new Error('Option --path is required when --target is "custom"');
@@ -81,6 +92,7 @@ export async function runInstallSkills(options: {
   skills?: string[] | string;
   mcp?: boolean;
   docker?: boolean;
+  localMcp?: boolean;
 }): Promise<void> {
   const sourceSkillsDir = findSourceSkillsDir();
   const destinationDirs = resolveDestinationDirs(options.target, options.path);
@@ -121,7 +133,6 @@ export async function runInstallSkills(options: {
     console.log(bold(green(`\n✔ Successfully installed ${selectedSkills.length} skills into ${destinationDir}`)));
   }
 
-  // Pre-warm / pull Docker sandbox image if requested or enabled
   if (options.docker) {
     console.log(bold(cyan('\n--- Checking Sandbox Docker Image ---')));
     const { DockerRunner } = await import('../../docker/runner.js');
@@ -139,21 +150,35 @@ export async function runInstallSkills(options: {
   }
 
   if (options.mcp) {
-    console.log(bold(cyan('\n--- MCP Server Configuration Snippet ---')));
-    console.log(
-      JSON.stringify(
-        {
-          mcpServers: {
-            'security-audit-sandbox': {
-              command: 'npx',
-              args: ['-y', '@security-audit/plugin', 'mcp'],
+    const clients = clientsForInstallTarget(options.target);
+    if (clients.length > 0) {
+      console.log(bold(cyan('\n--- Registering MCP Server in Client CLI(s) ---')));
+      const results = await setupClientIntegrations({
+        clients,
+        localAntigravity: options.localMcp,
+      });
+      for (const result of results) {
+        const status = result.status === 'existing' ? yellow('already configured') : green('configured');
+        console.log(` ${green('✔')} ${bold(result.client)}: ${status} via ${result.method}${result.path ? ` (${gray(result.path)})` : ''}`);
+        if (result.detail) console.log(gray(`   fallback detail: ${result.detail}`));
+      }
+    } else {
+      console.log(bold(cyan('\n--- MCP Server Configuration Snippet ---')));
+      console.log(
+        JSON.stringify(
+          {
+            mcpServers: {
+              'security-audit-sandbox': {
+                command: 'npx',
+                args: ['-y', '@security-audit/plugin', 'mcp'],
+              },
             },
           },
-        },
-        null,
-        2
-      )
-    );
-    console.log(gray('Add the snippet above to your agent MCP configuration file.\n'));
+          null,
+          2
+        )
+      );
+      console.log(gray('No concrete client CLI is associated with this target; use the snippet above if needed.\n'));
+    }
   }
 }

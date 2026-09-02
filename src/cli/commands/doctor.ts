@@ -15,11 +15,14 @@ function checkPortFree(port: number): Promise<boolean> {
   });
 }
 
-export async function runDoctor(): Promise<boolean> {
-  console.log(bold(cyan('\n=== Security Audit Plugin Doctor: System Diagnostics ===\n')));
+export interface DoctorOptions {
+  codex?: boolean;
+}
+
+export async function runDoctor(options: DoctorOptions = {}): Promise<boolean> {
+  console.log(bold(cyan('\n=== Security Audit Plugin Doctor: System Diagnostics ===\n'));
   let allHealthy = true;
 
-  // 1. Node.js Runtime
   const nodeVersion = process.version;
   const major = parseInt(nodeVersion.replace('v', '').split('.')[0], 10);
   if (major >= 20) {
@@ -29,7 +32,6 @@ export async function runDoctor(): Promise<boolean> {
     allHealthy = false;
   }
 
-  // 2. Docker Daemon
   try {
     const dockerVersion = execSync('docker version --format "{{.Server.Version}}"', { stdio: 'pipe' })
       .toString()
@@ -41,7 +43,6 @@ export async function runDoctor(): Promise<boolean> {
     allHealthy = false;
   }
 
-  // 3. Docker Sandbox Image
   try {
     const imgOut = execSync('docker images security-audit-sandbox --format "{{.Repository}}:{{.Tag}}"', {
       stdio: 'pipe',
@@ -58,7 +59,6 @@ export async function runDoctor(): Promise<boolean> {
     console.log(`${yellow('⚠')} Sandbox Docker Image: Unable to inspect docker images`);
   }
 
-  // 4. Ports Check
   const ports = [
     { port: 9999, desc: 'Sandbox HTTP Daemon' },
     { port: 9050, desc: 'Tor SOCKS5 In-Container Proxy' },
@@ -74,7 +74,6 @@ export async function runDoctor(): Promise<boolean> {
     }
   }
 
-  // 5. Skills Directory Validation
   const skillsDir = path.resolve(process.cwd(), 'skills');
   if (fs.existsSync(skillsDir)) {
     const skillDirs = fs.readdirSync(skillsDir).filter((d) => fs.statSync(path.join(skillsDir, d)).isDirectory());
@@ -88,11 +87,18 @@ export async function runDoctor(): Promise<boolean> {
     allHealthy = false;
   }
 
+  if (options.codex) {
+    console.log(bold(cyan('\n--- Codex MCP Registration & Protocol Smoke ---\n')));
+    const { runCodexDoctor } = await import('../integration/client_diagnostics.js');
+    const codexOk = await runCodexDoctor();
+    if (!codexOk) allHealthy = false;
+  }
+
   console.log('\n--------------------------------------------------------');
   if (allHealthy) {
-    console.log(bold(green('Status: All core requirements are SATISFIED. System is ready.')));
+    console.log(bold(green('Status: All requested requirements are SATISFIED. System is ready.')));
   } else {
-    console.log(bold(yellow('Status: Some dependencies need attention before starting.')));
+    console.log(bold(yellow('Status: Some dependencies or integrations need attention.'));
   }
   console.log('--------------------------------------------------------\n');
 
