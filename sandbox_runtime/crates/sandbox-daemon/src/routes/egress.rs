@@ -91,9 +91,7 @@ pub async fn handle_provision_egress(
         ));
     }
 
-    if let Err(e) =
-        apply_runtime_containment_with_agent_allowlist(&config, &agent_allowed_cidrs)
-    {
+    if let Err(e) = apply_runtime_containment_with_agent_allowlist(&config, &agent_allowed_cidrs) {
         // The base ruleset replacement removes any previous containment rules. If restoring the
         // process layer fails, stop Tor immediately so a pre-existing circuit cannot remain usable
         // through loopback by the agent identity.

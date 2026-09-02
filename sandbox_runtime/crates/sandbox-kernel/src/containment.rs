@@ -67,10 +67,8 @@ fn planned_rules(
     // `allowed_cidrs` contains all host-pinned destinations needed by managed clients. Only the
     // explicit IP/CIDR subset is granted to the raw agent shell. Resolved domain addresses remain
     // managed-only so a shared CDN/reverse-proxy IP cannot expand domain RoE into arbitrary vhosts.
-    let agent_allowed: BTreeSet<&str> = agent_allowed_cidrs
-        .iter()
-        .map(|cidr| cidr.trim())
-        .collect();
+    let agent_allowed: BTreeSet<&str> =
+        agent_allowed_cidrs.iter().map(|cidr| cidr.trim()).collect();
     let managed_only: Vec<String> = config
         .allowed_cidrs
         .iter()
@@ -229,19 +227,18 @@ mod tests {
     fn domain_pinned_cidrs_are_managed_only_but_explicit_ip_targets_remain_raw() {
         let config = EgressConfig {
             mode: AuditMode::Remote,
-            allowed_cidrs: vec![
-                "93.184.216.34/32".to_string(),
-                "203.0.113.7/32".to_string(),
-            ],
+            allowed_cidrs: vec!["93.184.216.34/32".to_string(), "203.0.113.7/32".to_string()],
             ..Default::default()
         };
         let rules = planned_rules(&config, 1001, &["203.0.113.7/32".to_string()]);
         let rendered: Vec<String> = rules.iter().map(|rule| rule.join(" ")).collect();
 
-        assert!(rendered.iter().any(|rule| {
-            rule == "meta skuid 1001 ip daddr 93.184.216.34/32 reject"
-        }));
-        assert!(!rendered.iter().any(|rule| rule.contains("203.0.113.7/32 reject")));
+        assert!(rendered
+            .iter()
+            .any(|rule| { rule == "meta skuid 1001 ip daddr 93.184.216.34/32 reject" }));
+        assert!(!rendered
+            .iter()
+            .any(|rule| rule.contains("203.0.113.7/32 reject")));
     }
 
     #[test]
