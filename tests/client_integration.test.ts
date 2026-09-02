@@ -10,7 +10,6 @@ import {
   readJsonConfig,
 } from '../src/cli/integration/client_registration.js';
 import {
-  buildCodexSecurityAuditSection,
   removeCodexSecurityAuditConfig,
   updateCodexSecurityAuditConfig,
 } from '../src/cli/integration/codex_config.js';
@@ -158,10 +157,7 @@ describe('client CLI integration layer', () => {
     }
 
     const codex = fs.readFileSync(paths.codexConfigPath, 'utf8');
-    expect(codex).toContain(buildCodexSecurityAuditSection({
-      nodePath: process.execPath,
-      launcherPath: expect.anything() as unknown as string,
-    }).split('\n')[0]);
+    expect(codex).toContain('[mcp_servers.security-audit-sandbox]');
     expect(parseCodexSecurityAuditConfig(codex).ok).toBe(true);
   });
 

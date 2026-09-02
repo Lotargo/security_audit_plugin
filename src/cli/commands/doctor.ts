@@ -20,7 +20,7 @@ export interface DoctorOptions {
 }
 
 export async function runDoctor(options: DoctorOptions = {}): Promise<boolean> {
-  console.log(bold(cyan('\n=== Security Audit Plugin Doctor: System Diagnostics ===\n'));
+  console.log(bold(cyan('\n=== Security Audit Plugin Doctor: System Diagnostics ===\n')));
   let allHealthy = true;
 
   const nodeVersion = process.version;
@@ -98,7 +98,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<boolean> {
   if (allHealthy) {
     console.log(bold(green('Status: All requested requirements are SATISFIED. System is ready.')));
   } else {
-    console.log(bold(yellow('Status: Some dependencies or integrations need attention.'));
+    console.log(bold(yellow('Status: Some dependencies or integrations need attention.')));
   }
   console.log('--------------------------------------------------------\n');
 
