@@ -5,6 +5,7 @@ import { RatchetBridge } from './security/ratchet_bridge.js';
 import { JailGuard } from './security/jail.js';
 import {
   isUrlInScope,
+  normalizeAgentNetworkTargets,
   normalizeCidrList,
   normalizeScopeHosts,
   resolveScopeTargets,
@@ -67,6 +68,18 @@ function normalizeProxyMode(proxy?: string): string | null {
   if (!proxy) return null;
   if (proxy === 'tor' || proxy === TOR_BROWSER_PROXY || proxy === TOR_HTTP_PROXY) return 'tor';
   return proxy;
+}
+
+function assertNoAuthorityOverride(...headerMaps: Array<Record<string, string> | undefined>): void {
+  for (const headers of headerMaps) {
+    if (!headers) continue;
+    for (const key of Object.keys(headers)) {
+      const normalized = key.trim().toLowerCase();
+      if (normalized === 'host' || normalized === ':authority') {
+        throw new Error('Custom Host/:authority headers are forbidden by the active RoE boundary');
+      }
+    }
+  }
 }
 
 export class SandboxBridge {
@@ -211,6 +224,8 @@ export class SandboxBridge {
       ? normalizeCidrList(options.denied_cidrs, 'denied CIDR')
       : undefined;
     const targetHosts = networkedMode ? normalizeScopeHosts(options.targets || []) : [];
+    const agentTargetCidrs =
+      networkedMode && !enableTor ? normalizeAgentNetworkTargets(options.targets || []) : [];
 
     if (enableTor && targetHosts.length === 0) {
       throw new Error('Tor scope requires at least one explicit domain, URL, or single-IP target');
@@ -227,6 +242,9 @@ export class SandboxBridge {
     const resolvedTargets =
       networkedMode && !enableTor ? await resolveScopeTargets(options.targets || []) : [];
     const allowedCidrs = [...new Set([...resolvedTargets, ...explicitAllowed])].sort();
+    const agentAllowedCidrs = enableTor
+      ? []
+      : [...new Set([...agentTargetCidrs, ...explicitAllowed])].sort();
 
     if (networkedMode && allowedCidrs.length === 0 && !enableTor) {
       throw new Error('Remote/hybrid scope requires at least one target or allowed CIDR');
@@ -236,6 +254,7 @@ export class SandboxBridge {
       mode: options.mode,
       targets: options.targets || [],
       allowed_cidrs: allowedCidrs,
+      agent_allowed_cidrs: agentAllowedCidrs,
       denied_cidrs: deniedCidrs,
       tor_enabled: enableTor,
       proxy_enabled: false,
@@ -262,7 +281,12 @@ export class SandboxBridge {
     }
 
     const { targetHosts, proxy: scopedProxy } = this.activeNetworkScope;
-    if (targetHosts.length > 0 && !isUrlInScope(url, targetHosts)) {
+    if (targetHosts.length === 0) {
+      throw new Error(
+        'Managed network calls require at least one explicit target hostname or single-IP target in the active scope'
+      );
+    }
+    if (!isUrlInScope(url, targetHosts)) {
       throw new Error(`URL is outside the active audit scope: ${url}`);
     }
 
@@ -331,6 +355,7 @@ export class SandboxBridge {
   }
 
   public async browserAudit(options: BrowserAuditOptions): Promise<any> {
+    assertNoAuthorityOverride(options.auth_headers, options.spoof_headers);
     const networkPolicy = this.prepareManagedNetworkCall(options.url, options.proxy);
     return this.request('POST', '/browser_audit', {
       ...options,
@@ -340,6 +365,7 @@ export class SandboxBridge {
   }
 
   public async httpProbe(options: HttpProbeOptions): Promise<any> {
+    assertNoAuthorityOverride(options.headers);
     const networkPolicy = this.prepareManagedNetworkCall(options.url, options.proxy);
     return this.request('POST', '/http_probe', {
       url: options.url,

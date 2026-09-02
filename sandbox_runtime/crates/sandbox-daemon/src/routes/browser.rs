@@ -8,6 +8,10 @@ use tracing::{error, info};
 
 use sandbox_kernel::browser_exec_identity;
 
+const SAFE_CHILD_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const TOR_BROWSER_PROXY: &str = "socks5://127.0.0.1:9050";
+const TOR_HTTP_PROXY: &str = "socks5h://127.0.0.1:9050";
+
 fn has_proxy(config: &Value) -> bool {
     config
         .get("proxy")
@@ -26,14 +30,54 @@ fn has_scope_hosts(config: &Value) -> bool {
         })
 }
 
+fn has_forbidden_authority_header(config: &Value) -> bool {
+    ["auth_headers", "spoof_headers"].iter().any(|field| {
+        config
+            .get(field)
+            .and_then(Value::as_object)
+            .is_some_and(|headers| {
+                headers.keys().any(|key| {
+                    let normalized = key.trim().to_ascii_lowercase();
+                    normalized == "host" || normalized == ":authority"
+                })
+            })
+    })
+}
+
+fn proxy_is_managed_tor(config: &Value) -> bool {
+    config
+        .get("proxy")
+        .and_then(Value::as_str)
+        .is_none_or(|proxy| {
+            let proxy = proxy.trim();
+            proxy.is_empty() || proxy == TOR_BROWSER_PROXY || proxy == TOR_HTTP_PROXY
+        })
+}
+
 pub async fn handle_browser_audit(
     Json(config): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    if has_proxy(&config) && !has_scope_hosts(&config) {
+    if !has_scope_hosts(&config) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
-                "error": "Proxied browser audits require an explicit RoE host allowlist"
+                "error": "Browser audits require an explicit RoE host allowlist"
+            })),
+        ));
+    }
+    if has_proxy(&config) && !proxy_is_managed_tor(&config) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "Browser proxy must use the managed local Tor transport"
+            })),
+        ));
+    }
+    if has_forbidden_authority_header(&config) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "Custom Host/:authority headers are forbidden by the RoE boundary"
             })),
         ));
     }
@@ -46,21 +90,26 @@ pub async fn handle_browser_audit(
     })?;
 
     let (uid, gid) = browser_exec_identity();
-    let mut command = Command::new("setpriv");
+    let mut command = Command::new("/usr/bin/setpriv");
     command
         .arg(format!("--reuid={uid}"))
         .arg(format!("--regid={gid}"))
         .arg("--clear-groups")
         .arg("--no-new-privs")
         .arg("--")
-        .arg("node")
+        .arg("/usr/bin/node")
         .arg("/opt/stealth/browser_launcher.js")
         .arg("--stdin-json")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .env("HOME", "/tmp");
+        .env_clear()
+        .env("HOME", "/tmp")
+        .env("PATH", SAFE_CHILD_PATH)
+        .env("LANG", "C.UTF-8")
+        .env("CHROMIUM_PATH", "/usr/bin/chromium")
+        .env("NODE_PATH", "/opt/stealth/node_modules");
 
     let mut child = command.spawn().map_err(|e| {
         error!("Failed to start browser launcher: {}", e);
@@ -122,18 +171,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn proxied_browser_requires_scope_hosts() {
-        let config =
-            serde_json::json!({"url": "https://example.com", "proxy": "socks5://127.0.0.1:9050"});
-        assert!(has_proxy(&config));
-        assert!(!has_scope_hosts(&config));
+    fn browser_always_requires_scope_hosts() {
+        let direct = serde_json::json!({"url": "https://example.com"});
+        assert!(!has_scope_hosts(&direct));
 
         let scoped = serde_json::json!({
             "url": "https://example.com",
-            "proxy": "socks5://127.0.0.1:9050",
             "allowed_hosts": ["example.com"]
         });
-        assert!(has_proxy(&scoped));
         assert!(has_scope_hosts(&scoped));
+    }
+
+    #[test]
+    fn browser_rejects_authority_override_headers() {
+        let spoofed = serde_json::json!({
+            "url": "https://example.com",
+            "allowed_hosts": ["example.com"],
+            "spoof_headers": {"Host": "evil.example"}
+        });
+        assert!(has_forbidden_authority_header(&spoofed));
+
+        let auth = serde_json::json!({
+            "url": "https://example.com",
+            "allowed_hosts": ["example.com"],
+            "auth_headers": {":authority": "evil.example"}
+        });
+        assert!(has_forbidden_authority_header(&auth));
+    }
+
+    #[test]
+    fn browser_proxy_is_limited_to_managed_tor() {
+        let managed = serde_json::json!({"proxy": TOR_BROWSER_PROXY});
+        let external = serde_json::json!({"proxy": "http://proxy.example:8080"});
+        assert!(proxy_is_managed_tor(&managed));
+        assert!(!proxy_is_managed_tor(&external));
     }
 }

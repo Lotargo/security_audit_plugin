@@ -7,6 +7,9 @@ use std::io::{Error as IoError, ErrorKind};
 use std::time::{Duration, Instant};
 use tracing::{error, info};
 
+const TOR_BROWSER_PROXY: &str = "socks5://127.0.0.1:9050";
+const TOR_HTTP_PROXY: &str = "socks5h://127.0.0.1:9050";
+
 #[derive(Debug, Deserialize)]
 pub struct ProbeRequest {
     pub url: String,
@@ -35,6 +38,7 @@ fn normalize_host(host: &str) -> String {
         .strip_prefix('[')
         .and_then(|value| value.strip_suffix(']'))
         .unwrap_or(&trimmed)
+        .trim_end_matches('.')
         .to_string()
 }
 
@@ -52,12 +56,25 @@ fn url_matches_scope(url: &reqwest::Url, allowed_hosts: &HashSet<String>) -> boo
         return false;
     }
     if allowed_hosts.is_empty() {
-        return true;
+        return false;
     }
 
     url.host_str()
         .map(normalize_host)
         .is_some_and(|host| allowed_hosts.contains(&host))
+}
+
+fn has_forbidden_authority_header(headers: Option<&HashMap<String, String>>) -> bool {
+    headers.is_some_and(|headers| {
+        headers.keys().any(|key| {
+            let normalized = key.trim().to_ascii_lowercase();
+            normalized == "host" || normalized == ":authority"
+        })
+    })
+}
+
+fn proxy_is_managed_tor(proxy: &str) -> bool {
+    matches!(proxy.trim(), TOR_BROWSER_PROXY | TOR_HTTP_PROXY)
 }
 
 pub async fn handle_http_probe(
@@ -66,6 +83,33 @@ pub async fn handle_http_probe(
     let method_str = payload.method.as_deref().unwrap_or("GET").to_uppercase();
     let timeout_duration = Duration::from_secs(payload.timeout_secs.unwrap_or(15));
     let allowed_hosts = normalize_allowed_hosts(payload.allowed_hosts.clone());
+
+    if allowed_hosts.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "HTTP probes require an explicit RoE host allowlist"
+            })),
+        ));
+    }
+    if has_forbidden_authority_header(payload.headers.as_ref()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Custom Host/:authority headers are forbidden by the RoE boundary"
+            })),
+        ));
+    }
+    if let Some(proxy) = payload.proxy.as_deref() {
+        if !proxy_is_managed_tor(proxy) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "HTTP probe proxy must use the managed local Tor transport"
+                })),
+            ));
+        }
+    }
 
     let parsed_target = reqwest::Url::parse(&payload.url).map_err(|e| {
         (
@@ -79,36 +123,16 @@ pub async fn handle_http_probe(
             Json(json!({"error": "Probe URL is outside the active RoE host scope"})),
         ));
     }
-    if payload.proxy.is_some() && allowed_hosts.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": "Proxied HTTP probes require an explicit RoE host allowlist"
-            })),
-        ));
-    }
-
-    let effective_redirect_hosts = if allowed_hosts.is_empty() {
-        if let Some(target_host) = parsed_target.host_str().map(normalize_host) {
-            let mut set = HashSet::new();
-            set.insert(target_host);
-            set
-        } else {
-            allowed_hosts.clone()
-        }
-    } else {
-        allowed_hosts.clone()
-    };
 
     info!(
         "Sending HTTP probe: {} {} (proxy: {:?}, scope_hosts: {})",
         method_str,
         payload.url,
         payload.proxy,
-        effective_redirect_hosts.len()
+        allowed_hosts.len()
     );
 
-    let redirect_hosts = effective_redirect_hosts;
+    let redirect_hosts = allowed_hosts.clone();
     let redirect_policy = reqwest::redirect::Policy::custom(move |attempt| {
         if attempt.previous().len() >= 10 {
             return attempt.error(IoError::new(
@@ -278,10 +302,21 @@ mod tests {
     }
 
     #[test]
-    fn empty_scope_hosts_preserve_direct_l3_only_mode() {
+    fn empty_scope_hosts_fail_closed() {
         let allowed = normalize_allowed_hosts(None);
         let url = reqwest::Url::parse("https://203.0.113.7/").unwrap();
-        assert!(url_matches_scope(&url, &allowed));
+        assert!(!url_matches_scope(&url, &allowed));
+    }
+
+    #[test]
+    fn authority_override_headers_are_rejected() {
+        let mut host = HashMap::new();
+        host.insert("Host".to_string(), "evil.example".to_string());
+        assert!(has_forbidden_authority_header(Some(&host)));
+
+        let mut authority = HashMap::new();
+        authority.insert(":authority".to_string(), "evil.example".to_string());
+        assert!(has_forbidden_authority_header(Some(&authority)));
     }
 
     #[test]
@@ -305,5 +340,12 @@ mod tests {
 
         assert!(!url_matches_scope(&file_url, &allowed));
         assert!(!url_matches_scope(&gopher_url, &allowed));
+    }
+
+    #[test]
+    fn proxy_is_restricted_to_managed_tor() {
+        assert!(proxy_is_managed_tor(TOR_BROWSER_PROXY));
+        assert!(proxy_is_managed_tor(TOR_HTTP_PROXY));
+        assert!(!proxy_is_managed_tor("http://proxy.example:8080"));
     }
 }

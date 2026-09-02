@@ -1,5 +1,6 @@
 use crate::egress::{split_ip_families, EgressConfig};
 use crate::privilege::{configured_audit_exec_identity, TOR_EXEC_UID};
+use std::collections::BTreeSet;
 #[cfg(target_os = "linux")]
 use std::process::Command;
 use thiserror::Error;
@@ -16,7 +17,14 @@ pub enum ContainmentError {
     IoError(#[from] std::io::Error),
 }
 
-fn planned_rules(config: &EgressConfig, audit_uid: u32) -> Vec<Vec<String>> {
+fn planned_rules(
+    config: &EgressConfig,
+    audit_uid: u32,
+    agent_allowed_cidrs: &[String],
+) -> Vec<Vec<String>> {
+    // Agent-controlled shells never need direct access to Tor control services or DNS. Target
+    // names are resolved by the trusted host for L3 pinning, while browser/probe clients use
+    // their own managed resolver path. Blocking both UDP/TCP 53 closes DNS as an exfil channel.
     let mut rules = vec![
         vec![
             "meta".into(),
@@ -36,12 +44,7 @@ fn planned_rules(config: &EgressConfig, audit_uid: u32) -> Vec<Vec<String>> {
             "9051".into(),
             "reject".into(),
         ],
-    ];
-
-    if config.tor_enabled {
-        // A Tor scope must not leak or exfiltrate target names through the container resolver.
-        // Managed browser/probe traffic delegates hostname resolution to the SOCKS proxy instead.
-        rules.push(vec![
+        vec![
             "meta".into(),
             "skuid".into(),
             audit_uid.to_string(),
@@ -49,8 +52,8 @@ fn planned_rules(config: &EgressConfig, audit_uid: u32) -> Vec<Vec<String>> {
             "dport".into(),
             "53".into(),
             "reject".into(),
-        ]);
-        rules.push(vec![
+        ],
+        vec![
             "meta".into(),
             "skuid".into(),
             audit_uid.to_string(),
@@ -58,8 +61,48 @@ fn planned_rules(config: &EgressConfig, audit_uid: u32) -> Vec<Vec<String>> {
             "dport".into(),
             "53".into(),
             "reject".into(),
-        ]);
+        ],
+    ];
 
+    // `allowed_cidrs` contains all host-pinned destinations needed by managed clients. Only the
+    // explicit IP/CIDR subset is granted to the raw agent shell. Resolved domain addresses remain
+    // managed-only so a shared CDN/reverse-proxy IP cannot expand domain RoE into arbitrary vhosts.
+    let agent_allowed: BTreeSet<&str> = agent_allowed_cidrs
+        .iter()
+        .map(|cidr| cidr.trim())
+        .collect();
+    let managed_only: Vec<String> = config
+        .allowed_cidrs
+        .iter()
+        .filter(|cidr| !agent_allowed.contains(cidr.trim()))
+        .cloned()
+        .collect();
+    let (managed_v4, managed_v6) = split_ip_families(&managed_only);
+
+    for cidr in managed_v4 {
+        rules.push(vec![
+            "meta".into(),
+            "skuid".into(),
+            audit_uid.to_string(),
+            "ip".into(),
+            "daddr".into(),
+            cidr,
+            "reject".into(),
+        ]);
+    }
+    for cidr in managed_v6 {
+        rules.push(vec![
+            "meta".into(),
+            "skuid".into(),
+            audit_uid.to_string(),
+            "ip6".into(),
+            "daddr".into(),
+            cidr,
+            "reject".into(),
+        ]);
+    }
+
+    if config.tor_enabled {
         let (denied_v4, denied_v6) = split_ip_families(&config.denied_cidrs);
         if !denied_v4.is_empty() {
             rules.push(vec![
@@ -114,13 +157,26 @@ fn insert_output_rule(rule: &[String]) -> Result<(), ContainmentError> {
 
 /// Adds process-identity isolation on top of the CIDR RoE ruleset.
 ///
-/// `nft insert` prepends rules, so they are installed in reverse order to preserve the desired
-/// evaluation order: agent Tor/DNS denial first, Tor private-range denial second, Tor relay egress
-/// last.
+/// This strict entry point grants the raw agent shell no destination CIDRs. Production egress
+/// provisioning uses `apply_runtime_containment_with_agent_allowlist` to opt in only explicit
+/// IP/CIDR targets after validating that they are a subset of the kernel allowlist.
 pub fn apply_runtime_containment(config: &EgressConfig) -> Result<(), ContainmentError> {
+    apply_runtime_containment_with_agent_allowlist(config, &[])
+}
+
+/// Adds process-identity isolation while granting raw agent access only to the validated explicit
+/// IP/CIDR subset supplied by the trusted provisioning route.
+///
+/// `nft insert` prepends rules, so they are installed in reverse order to preserve the desired
+/// evaluation order: agent Tor/DNS/managed-target denial first, Tor private-range denial second,
+/// Tor relay egress last.
+pub fn apply_runtime_containment_with_agent_allowlist(
+    config: &EgressConfig,
+    agent_allowed_cidrs: &[String],
+) -> Result<(), ContainmentError> {
     let (audit_uid, _) =
         configured_audit_exec_identity().ok_or(ContainmentError::MissingAuditIdentity)?;
-    let rules = planned_rules(config, audit_uid);
+    let rules = planned_rules(config, audit_uid, agent_allowed_cidrs);
 
     #[cfg(target_os = "linux")]
     for rule in rules.iter().rev() {
@@ -151,15 +207,41 @@ mod tests {
     use crate::egress::{AuditMode, EgressConfig};
 
     #[test]
-    fn local_containment_blocks_agent_from_tor_services() {
-        let rules = planned_rules(&EgressConfig::default(), 1001);
-        assert_eq!(rules.len(), 2);
-        assert!(rules[0]
-            .join(" ")
-            .contains("meta skuid 1001 tcp dport 9050 reject"));
-        assert!(rules[1]
-            .join(" ")
-            .contains("meta skuid 1001 tcp dport 9051 reject"));
+    fn local_containment_blocks_agent_from_tor_and_dns_services() {
+        let rules = planned_rules(&EgressConfig::default(), 1001, &[]);
+        assert_eq!(rules.len(), 4);
+        let rendered: Vec<String> = rules.iter().map(|rule| rule.join(" ")).collect();
+        assert!(rendered
+            .iter()
+            .any(|rule| rule == "meta skuid 1001 tcp dport 9050 reject"));
+        assert!(rendered
+            .iter()
+            .any(|rule| rule == "meta skuid 1001 tcp dport 9051 reject"));
+        assert!(rendered
+            .iter()
+            .any(|rule| rule == "meta skuid 1001 udp dport 53 reject"));
+        assert!(rendered
+            .iter()
+            .any(|rule| rule == "meta skuid 1001 tcp dport 53 reject"));
+    }
+
+    #[test]
+    fn domain_pinned_cidrs_are_managed_only_but_explicit_ip_targets_remain_raw() {
+        let config = EgressConfig {
+            mode: AuditMode::Remote,
+            allowed_cidrs: vec![
+                "93.184.216.34/32".to_string(),
+                "203.0.113.7/32".to_string(),
+            ],
+            ..Default::default()
+        };
+        let rules = planned_rules(&config, 1001, &["203.0.113.7/32".to_string()]);
+        let rendered: Vec<String> = rules.iter().map(|rule| rule.join(" ")).collect();
+
+        assert!(rendered.iter().any(|rule| {
+            rule == "meta skuid 1001 ip daddr 93.184.216.34/32 reject"
+        }));
+        assert!(!rendered.iter().any(|rule| rule.contains("203.0.113.7/32 reject")));
     }
 
     #[test]
@@ -169,7 +251,7 @@ mod tests {
             tor_enabled: true,
             ..Default::default()
         };
-        let rules = planned_rules(&config, 1001);
+        let rules = planned_rules(&config, 1001, &[]);
         let rendered: Vec<String> = rules.iter().map(|rule| rule.join(" ")).collect();
 
         assert!(rendered

@@ -14,6 +14,8 @@ use sandbox_kernel::audit_exec_identity;
 use sandbox_kernel::tmux::TmuxManager;
 use sandbox_kernel::watchdog::{process_command_output, WatchdogResult};
 
+const SAFE_CHILD_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
 #[derive(Debug, Deserialize)]
 pub struct ExecRequest {
     pub command: String,
@@ -60,14 +62,20 @@ pub async fn handle_execute(
 
     #[cfg(not(target_os = "windows"))]
     let mut cmd = {
-        let mut c = Command::new("sh");
+        let mut c = Command::new("/bin/sh");
         c.args(["-c", &payload.command]);
         let (uid, gid) = audit_exec_identity();
         #[cfg(unix)]
         {
             c.as_std_mut().uid(uid).gid(gid);
         }
+        // The daemon carries control-plane trust material in its environment. Agent-controlled
+        // children must receive a clean environment so BRIDGE_SESSION_KEY_HEX/HOST_PUBKEY_HEX and
+        // future daemon secrets can never be recovered with `env` or /proc/self/environ.
+        c.env_clear();
         c.env("HOME", "/tmp");
+        c.env("PATH", SAFE_CHILD_PATH);
+        c.env("LANG", "C.UTF-8");
         c
     };
 

@@ -117,6 +117,32 @@ export function normalizeCidrList(values: string[], label: string): string[] {
 }
 
 /**
+ * Return only target network specifications the raw agent shell may use directly.
+ * Domain targets deliberately do not qualify: their resolved addresses are reserved for managed
+ * browser/probe clients so a shared CDN IP cannot become an implicit raw-shell scope expansion.
+ */
+export function normalizeAgentNetworkTargets(targets: string[]): string[] {
+  const cidrs = new Set<string>();
+
+  for (const target of targets) {
+    const trimmed = target.trim();
+    if (!trimmed) throw new Error('Scope target cannot be empty');
+
+    const direct = normalizeIpSpec(trimmed);
+    if (direct) {
+      cidrs.add(direct);
+      continue;
+    }
+
+    const hostname = extractTargetHostname(trimmed);
+    const hostIp = normalizeIpSpec(hostname);
+    if (hostIp) cidrs.add(hostIp);
+  }
+
+  return [...cidrs].sort();
+}
+
+/**
  * Produce the exact L7 hostname allowlist used by managed proxy/Tor clients.
  * Broad CIDRs are intentionally rejected here: once traffic is tunneled through a proxy the
  * sandbox kernel can see only the proxy endpoint, so a network CIDR cannot be enforced reliably.

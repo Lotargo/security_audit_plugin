@@ -6,6 +6,8 @@ use thiserror::Error;
 #[allow(unused_imports)]
 use tracing::{error, info, warn};
 
+const SAFE_CHILD_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
 #[derive(Error, Debug)]
 pub enum TmuxError {
     #[error("Tmux execution failed: {0}")]
@@ -63,10 +65,9 @@ impl TmuxManager {
         }
     }
 
-    /// Creates a root-owned tmux control session whose pane shell is explicitly demoted
-    /// when the sandbox runtime provides AUDIT_EXEC_UID/GID. Host-side tests omit those
-    /// variables and already execute as an unprivileged user, so no impossible UID switch
-    /// is attempted there.
+    /// Creates a root-owned tmux control session whose pane shell is explicitly demoted and
+    /// launched with a clean environment. The tmux server may retain daemon-only variables, but
+    /// agent-controlled pane processes never inherit transport keys or control-plane trust data.
     pub fn start_session(
         session_name: &str,
         initial_command: Option<&str>,
@@ -78,12 +79,16 @@ impl TmuxManager {
 
         #[cfg(target_os = "linux")]
         {
+            let clean_shell = format!(
+                "/usr/bin/env -i HOME=/tmp PATH={} TERM=xterm-256color LANG=C.UTF-8 /bin/sh",
+                SAFE_CHILD_PATH
+            );
             let pane_shell = match configured_audit_exec_identity() {
                 Some((uid, gid)) => format!(
-                    "exec setpriv --reuid={} --regid={} --clear-groups --no-new-privs -- sh",
-                    uid, gid
+                    "exec /usr/bin/setpriv --reuid={} --regid={} --clear-groups --no-new-privs -- {}",
+                    uid, gid, clean_shell
                 ),
-                None => "exec sh".to_string(),
+                None => format!("exec {clean_shell}"),
             };
 
             let status_res = Command::new("tmux")
