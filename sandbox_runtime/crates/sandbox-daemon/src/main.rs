@@ -14,9 +14,11 @@ use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod auth;
+mod evolve_events;
 mod routes;
 
 use auth::{ratchet_auth_middleware, RatchetAuthState};
+use evolve_events::EvolveEventSink;
 use sandbox_kernel::canary::CanaryManager;
 use sandbox_kernel::{
     apply_runtime_containment, audit_identity_conflicts_with_reserved_runtime_uid,
@@ -102,8 +104,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let evolve_mgr = Arc::new(Mutex::new(EvolveManager::new()));
     let (evolve_event_tx, mut evolve_event_rx) = mpsc::unbounded_channel();
+    let evolve_event_sink = EvolveEventSink::new(evolve_event_tx);
     let canary_mgr = Arc::new(Mutex::new(CanaryManager::with_event_sender(
-        evolve_event_tx,
+        evolve_event_sink.sender(),
     )));
 
     // Canary and future sensors publish facts into the Evolve event pipeline. The Evolve manager
@@ -202,7 +205,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ratchet_auth_middleware,
         ))
         .layer(Extension(canary_mgr))
-        .layer(Extension(evolve_mgr));
+        .layer(Extension(evolve_mgr))
+        .layer(Extension(evolve_event_sink));
 
     let app = Router::new()
         .merge(health_router)
