@@ -166,6 +166,23 @@ describeDocker('Evolve automatic containment-to-deception transition', () => {
     }
     expect(status.runtime.state).toBe('DECEIVE');
 
+    await expect(
+      bridge.request('POST', '/execute', {
+        command: 'cat /workspace/real-marker.txt',
+      })
+    ).rejects.toThrow(/temporarily unavailable/i);
+
+    await expect(
+      bridge.request('POST', '/execute', {
+        command: 'cat /workspace/real-marker.txt',
+        evolve_session_id: 'wrong-session',
+      })
+    ).rejects.toThrow(/temporarily unavailable/i);
+
+    await expect(
+      bridge.setScope({ mode: 'local', arm_canaries: false })
+    ).rejects.toThrow(/temporarily unavailable/i);
+
     let interactiveError = '';
     try {
       await bridge.interactiveInput('y', 'main');
