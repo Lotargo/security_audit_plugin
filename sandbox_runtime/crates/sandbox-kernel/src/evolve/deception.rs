@@ -39,8 +39,16 @@ impl DeceptionProfile {
 
     pub fn select(trace: &BehaviorTrace) -> Self {
         for event in trace.events.iter().rev() {
-            let command = event.command.as_deref().unwrap_or_default().to_ascii_lowercase();
-            let resource = event.resource.as_deref().unwrap_or_default().to_ascii_lowercase();
+            let command = event
+                .command
+                .as_deref()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let resource = event
+                .resource
+                .as_deref()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
 
             if command.contains("kubectl") || resource.contains(".kube") {
                 return Self::KubernetesNode;
@@ -48,10 +56,16 @@ impl DeceptionProfile {
             if command.contains("ssh ") || resource.contains(".ssh") {
                 return Self::BastionHost;
             }
-            if command.contains("psql") || command.contains("mysql") || resource.contains("database") {
+            if command.contains("psql")
+                || command.contains("mysql")
+                || resource.contains("database")
+            {
                 return Self::DatabaseHost;
             }
-            if resource.contains(".github") || resource.contains("gitlab") || command.contains("ci") {
+            if resource.contains(".github")
+                || resource.contains("gitlab")
+                || command.contains("ci")
+            {
                 return Self::CiRunner;
             }
         }
@@ -227,19 +241,19 @@ fn planned_services(profile: DeceptionProfile) -> Vec<DeceptionService> {
             &[("app-http", "app.prod.internal", 18082, "http")]
         }
         DeceptionProfile::DatabaseHost => {
-            &[("postgres-shadow", "db-prod.internal", 18432, "postgres")]
+            &[("postgres", "db-prod.internal", 18432, "postgres")]
         }
         DeceptionProfile::KubernetesNode => {
-            &[("kube-api-shadow", "control-plane.internal", 18084, "http")]
+            &[("kube-api", "control-plane.internal", 18084, "http")]
         }
         DeceptionProfile::BastionHost => {
-            &[("ssh-shadow", "bastion.prod.internal", 18022, "ssh")]
+            &[("sshd", "bastion.prod.internal", 18022, "ssh")]
         }
         DeceptionProfile::SecretsService => {
-            &[("vault-shadow", "vault.prod.internal", 18200, "http")]
+            &[("vault", "vault.prod.internal", 18200, "http")]
         }
         DeceptionProfile::InternalApi => {
-            &[("internal-api-shadow", "api.prod.internal", 18083, "http")]
+            &[("internal-api", "api.prod.internal", 18083, "http")]
         }
     };
 
@@ -266,11 +280,21 @@ fn materialize_profile(
 
     materialize_synthetic_etc(root, services)?;
 
+    let visible_services: Vec<_> = services
+        .iter()
+        .map(|service| {
+            serde_json::json!({
+                "name": service.name,
+                "host": service.hostname,
+                "port": service.port,
+                "protocol": service.protocol,
+            })
+        })
+        .collect();
     let manifest = serde_json::json!({
         "environment": "production",
-        "profile": profile.id(),
-        "synthetic": true,
-        "services": services,
+        "region": "eu-central-1",
+        "services": visible_services,
     });
     let manifest_path = root.join("manifest.json");
     fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
@@ -393,7 +417,7 @@ fn materialize_synthetic_etc(
         "etc/passwd",
         "root:x:0:0:root:/root:/bin/bash\ndeploy:x:65533:65533:Deployment:/workspace/home:/bin/bash\n",
     )?;
-    write_file(root, "etc/group", "root:x:0:\naudit-deception:x:65533:deploy\n")?;
+    write_file(root, "etc/group", "root:x:0:\ndeploy:x:65533:\n")?;
     Ok(())
 }
 

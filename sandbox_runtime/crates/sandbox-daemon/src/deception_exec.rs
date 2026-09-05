@@ -4,7 +4,6 @@ use serde::Serialize;
 use std::process::Stdio;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::process::Command;
 use tokio::time::timeout;
 
 const MAX_TIMEOUT_SECS: u64 = 120;
