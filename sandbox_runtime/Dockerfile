@@ -44,6 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     jq \
     procps \
+    inotify-tools \
     nodejs \
     npm \
     chromium \

@@ -8,6 +8,13 @@
 
 ## [Unreleased]
 
+### Adaptive Deception / Evolve
+- Добавлен Rust-модуль `EvolveManager` с персистентной памятью поведенческих паттернов, поколениями адаптации и детерминированными defensive-рекомендациями.
+- После срабатывания primary honeytoken сначала защёлкивается Kill Switch, затем динамически создаётся изолированная ложная поверхность `.deployment/prod/` и включается файловая телеметрия через `inotifywait`.
+- Добавлены защищённые daemon endpoints и MCP-инструменты `sandbox_evolve_status` / `sandbox_evolve_observe` для чтения состояния и записи подтверждённых TTP.
+- Emergency isolation теперь нельзя переоткрыть повторным `set_scope` в том же runtime; возврат к networked-аудиту требует чистого recreate контейнера.
+- Обновлён `security-audit-orchestrator`: Evolve оформлен как отдельная containment-first фаза `detect -> contain -> substitute surface -> observe -> adapt`.
+
 ---
 
 ## [0.6.0] - 2026-09-01

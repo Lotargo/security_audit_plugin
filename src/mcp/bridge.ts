@@ -47,6 +47,14 @@ export interface ExecResult {
   log_path?: string;
 }
 
+export interface EvolveObserveOptions {
+  category: string;
+  technique: string;
+  evidence: string;
+  severity?: number;
+  path?: string;
+}
+
 interface DaemonExecResult {
   output: string;
   exit_code: number;
@@ -393,6 +401,20 @@ export class SandboxBridge {
 
   public async armCanary(tokenLabel: string = 'default_audit_canary'): Promise<any> {
     return this.request('POST', '/arm_canary', { token_label: tokenLabel });
+  }
+
+  public async evolveStatus(): Promise<any> {
+    return this.request('GET', '/evolve/status');
+  }
+
+  public async evolveObserve(options: EvolveObserveOptions): Promise<any> {
+    return this.request('POST', '/evolve/observe', {
+      category: options.category,
+      technique: options.technique,
+      evidence: options.evidence,
+      severity: options.severity ?? 3,
+      path: options.path,
+    });
   }
 
   public fsRead(relPath: string): { path: string; content: string } {

@@ -20,7 +20,7 @@ use auth::{ratchet_auth_middleware, RatchetAuthState};
 use sandbox_kernel::canary::CanaryManager;
 use sandbox_kernel::{
     apply_runtime_containment, audit_identity_conflicts_with_reserved_runtime_uid,
-    configured_audit_exec_identity, EgressConfig, EgressManager,
+    configured_audit_exec_identity, EgressConfig, EgressManager, EvolveManager,
 };
 
 fn validate_runtime_identity_contract() -> Result<(), Box<dyn std::error::Error>> {
@@ -99,11 +99,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .expect("Failed to initialize RatchetAuthState");
 
-    let canary_mgr = Arc::new(Mutex::new(CanaryManager::new()));
+    let evolve_mgr = EvolveManager::new();
+    let canary_mgr = Arc::new(Mutex::new(CanaryManager::with_evolve(evolve_mgr.clone())));
 
     let health_router = Router::new()
         .route("/health", get(handle_health))
-        .layer(Extension(canary_mgr.clone()));
+        .layer(Extension(canary_mgr.clone()))
+        .layer(Extension(evolve_mgr.clone()));
 
     let protected_routes = Router::new()
         .route("/execute", post(routes::exec::handle_execute))
@@ -132,6 +134,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/rotate_tor", post(routes::tor::handle_rotate_tor))
         .route("/arm_canary", post(routes::canary::handle_arm_canary))
         .route("/canary_status", get(routes::canary::handle_canary_status))
+        .route(
+            "/evolve/status",
+            get(routes::evolve::handle_evolve_status),
+        )
+        .route(
+            "/evolve/observe",
+            post(routes::evolve::handle_evolve_observe),
+        )
         .route("/http_probe", post(routes::probe::handle_http_probe))
         .route(
             "/browser_audit",
@@ -141,7 +151,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             auth_state.clone(),
             ratchet_auth_middleware,
         ))
-        .layer(Extension(canary_mgr));
+        .layer(Extension(canary_mgr))
+        .layer(Extension(evolve_mgr));
 
     let app = Router::new()
         .merge(health_router)
@@ -159,8 +170,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn handle_health(
     Extension(canary_mgr): Extension<Arc<Mutex<CanaryManager>>>,
+    Extension(evolve_mgr): Extension<EvolveManager>,
 ) -> Json<serde_json::Value> {
     let mgr = canary_mgr.lock().await;
+    let evolve = evolve_mgr.status().ok();
     Json(json!({
         "status": "ok",
         "service": "sandbox-daemon",
@@ -168,6 +181,7 @@ async fn handle_health(
         "isolated": sandbox_kernel::KillSwitch::is_isolated(),
         "canary_armed": mgr.is_armed(),
         "canary_traps_count": mgr.get_traps().len(),
-        "canary_triggered_count": mgr.triggered_count()
+        "canary_triggered_count": mgr.triggered_count(),
+        "evolve": evolve
     }))
 }

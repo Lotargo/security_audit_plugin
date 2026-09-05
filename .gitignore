@@ -44,6 +44,8 @@ credentials
 *.decoy
 
 # Runtime Logs, Dumps & Sandbox Workspace
+.evolve/
+.deployment/
 logs/
 /workspace/
 reports/
