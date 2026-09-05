@@ -92,17 +92,19 @@ impl BehaviorProfiler {
             BehaviorTrace::new(session_id, event.timestamp_ms, self.event_capacity)
         });
 
+        let sequence_risk = sequence_risk(trace, event, &tags);
+        let effective_risk = max_risk(base_risk, sequence_risk);
+
         for tag in &tags {
             trace.tags.insert(*tag);
         }
-
-        let sequence_risk = sequence_risk(trace, event, &tags);
-        let effective_risk = max_risk(base_risk, sequence_risk);
         if effective_risk.rank() > trace.risk_level.rank() {
             trace.risk_level = effective_risk;
         }
 
-        trace.push_event(event.clone());
+        let mut normalized_event = event.clone();
+        normalized_event.risk_hint = Some(effective_risk);
+        trace.push_event(normalized_event);
 
         tags.sort();
         tags.dedup();
