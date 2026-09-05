@@ -60,6 +60,15 @@ impl CanaryManager {
 
     /// Plants deceptive honeytoken files into the target filesystem.
     pub async fn arm_canaries(&mut self, base_dir: &Path) -> Result<Vec<CanaryTrap>, CanaryError> {
+        self.arm_canaries_for_session(base_dir, None).await
+    }
+
+    /// Plants canaries and associates future trigger events with a behavioral Evolve session.
+    pub async fn arm_canaries_for_session(
+        &mut self,
+        base_dir: &Path,
+        session_id: Option<String>,
+    ) -> Result<Vec<CanaryTrap>, CanaryError> {
         let mut planted = Vec::new();
 
         // 1. AWS Credentials Honeypot
@@ -158,13 +167,13 @@ users:
         self.traps = planted.clone();
         self.is_armed.store(true, Ordering::SeqCst);
 
-        self.spawn_watcher(planted.clone());
+        self.spawn_watcher(planted.clone(), session_id);
 
         info!("Armed {} canary honeytoken tripwires.", planted.len());
         Ok(planted)
     }
 
-    fn spawn_watcher(&self, traps: Vec<CanaryTrap>) {
+    fn spawn_watcher(&self, traps: Vec<CanaryTrap>, session_id: Option<String>) {
         let is_armed = self.is_armed.clone();
         let triggered_count = self.triggered_count.clone();
         let event_sender = self.event_sender.clone();
@@ -211,6 +220,7 @@ users:
                                 triggered_count.as_ref(),
                                 path,
                                 trap_type,
+                                session_id.as_deref(),
                             );
                             is_armed.store(false, Ordering::SeqCst);
                             return;
@@ -239,6 +249,7 @@ fn handle_canary_trigger(
     triggered_count: &AtomicUsize,
     path: &Path,
     trap_type: &str,
+    session_id: Option<&str>,
 ) {
     triggered_count.fetch_add(1, Ordering::SeqCst);
     error!(
@@ -246,13 +257,16 @@ fn handle_canary_trigger(
         path
     );
 
-    let event = SecurityEvent::new(EventSource::Canary, SecurityEventType::CanaryAccess)
+    let mut event = SecurityEvent::new(EventSource::Canary, SecurityEventType::CanaryAccess)
         .with_resource(path.to_string_lossy().into_owned())
         .with_risk_hint(RiskLevel::High)
         .with_metadata(serde_json::json!({
             "trap_type": trap_type,
             "legacy_reaction": "isolate"
         }));
+    if let Some(session_id) = session_id {
+        event = event.with_session_id(session_id.to_string());
+    }
 
     if let Some(sender) = event_sender {
         if sender.send(event).is_ok() {
@@ -299,6 +313,7 @@ mod tests {
             &triggered_count,
             path,
             "env_secrets",
+            Some("audit-session-1"),
         );
 
         let event = receiver.recv().await.expect("expected canary event");
@@ -306,6 +321,7 @@ mod tests {
         assert_eq!(event.source, EventSource::Canary);
         assert_eq!(event.event_type, SecurityEventType::CanaryAccess);
         assert_eq!(event.resource.as_deref(), Some("/workspace/.env.decoy"));
+        assert_eq!(event.session_id.as_deref(), Some("audit-session-1"));
         assert_eq!(event.risk_hint, Some(RiskLevel::High));
     }
 }
