@@ -311,6 +311,30 @@ export class SandboxBridge {
     return this.request('POST', '/rotate_tor', {});
   }
 
+  public async setEvolveEnabled(enabled: boolean): Promise<any> {
+    return this.request('POST', '/evolve/enable', { enabled });
+  }
+
+  public async getEvolveStatus(): Promise<any> {
+    return this.request('GET', '/evolve/status');
+  }
+
+  public async getEvolveEvents(limit: number = 100): Promise<any> {
+    const boundedLimit = Math.max(1, Math.min(1000, Math.trunc(limit)));
+    return this.request('GET', `/evolve/events?limit=${boundedLimit}`);
+  }
+
+  public async getEvolveSessions(): Promise<any> {
+    return this.request('GET', '/evolve/sessions');
+  }
+
+  public async getEvolveTrace(sessionId: string = this.activeEvolveSessionId): Promise<any> {
+    return this.request(
+      'GET',
+      `/evolve/trace?session_id=${encodeURIComponent(sessionId)}`
+    );
+  }
+
   public async exec(command: string, timeoutSecs: number = 60): Promise<ExecResult> {
     const raw = await this.request<DaemonExecResult>('POST', '/execute', {
       command,
