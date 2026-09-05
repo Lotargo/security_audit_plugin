@@ -275,12 +275,12 @@ pub async fn handle_http_probe(
         }
     };
 
-    if let Some(headers_map) = payload.headers {
+    if let Some(headers_map) = payload.headers.as_ref() {
         let mut header_map = HeaderMap::new();
         for (k, v) in headers_map {
             if let (Ok(h_name), Ok(h_val)) = (
                 HeaderName::from_bytes(k.as_bytes()),
-                HeaderValue::from_str(&v),
+                HeaderValue::from_str(v),
             ) {
                 header_map.insert(h_name, h_val);
             }
@@ -288,8 +288,8 @@ pub async fn handle_http_probe(
         req_builder = req_builder.headers(header_map);
     }
 
-    if let Some(body_content) = payload.body {
-        req_builder = req_builder.body(body_content);
+    if let Some(body_content) = payload.body.as_ref() {
+        req_builder = req_builder.body(body_content.clone());
     }
 
     let start_time = Instant::now();
