@@ -7,20 +7,23 @@ use serde_json::json;
 use std::io::{Error as IoError, ErrorKind};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod auth;
+mod evolve_events;
 mod routes;
 
 use auth::{ratchet_auth_middleware, RatchetAuthState};
+use evolve_events::EvolveEventSink;
 use sandbox_kernel::canary::CanaryManager;
 use sandbox_kernel::{
     apply_runtime_containment, audit_identity_conflicts_with_reserved_runtime_uid,
-    configured_audit_exec_identity, EgressConfig, EgressManager, EvolveManager,
+    configured_audit_exec_identity, EgressConfig, EgressManager, EvolveDecision, EvolveManager,
+    KillSwitch, SecurityEventType,
 };
 
 fn validate_runtime_identity_contract() -> Result<(), Box<dyn std::error::Error>> {
@@ -99,8 +102,82 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .expect("Failed to initialize RatchetAuthState");
 
-    let evolve_mgr = EvolveManager::new();
-    let canary_mgr = Arc::new(Mutex::new(CanaryManager::with_evolve(evolve_mgr.clone())));
+    let evolve_mgr = Arc::new(Mutex::new(EvolveManager::new()));
+    let (evolve_event_tx, mut evolve_event_rx) = mpsc::unbounded_channel();
+    let evolve_event_sink = EvolveEventSink::new(evolve_event_tx);
+    let canary_mgr = Arc::new(Mutex::new(CanaryManager::with_event_sender(
+        evolve_event_sink.sender(),
+    )));
+
+    // Canary and future sensors publish facts into the Evolve event pipeline. The Evolve manager
+    // decides the reaction. Until Deception Fabric exists, high-risk events intentionally retain
+    // the existing fail-closed isolation behavior.
+    let evolve_event_manager = evolve_mgr.clone();
+    tokio::spawn(async move {
+        while let Some(event) = evolve_event_rx.recv().await {
+            let event_id = event.event_id.clone();
+            let resource = event.resource.clone();
+            let event_type = event.event_type;
+            let trap_type = event
+                .metadata
+                .get("trap_type")
+                .and_then(|value| value.as_str())
+                .map(str::to_string);
+            let decision = {
+                let mut manager = evolve_event_manager.lock().await;
+                manager.ingest_event(event)
+            };
+
+            match decision {
+                EvolveDecision::Observe => {
+                    info!(event_id = %event_id, "Evolve recorded low-risk security event");
+                }
+                EvolveDecision::EnhancedTelemetry => {
+                    warn!(
+                        event_id = %event_id,
+                        resource = ?resource,
+                        "Evolve entered suspicious observation state"
+                    );
+                }
+                EvolveDecision::LegacyIsolate | EvolveDecision::Isolate => {
+                    let reason = format!(
+                        "Evolve security event requires isolation: event_id={event_id}, resource={resource:?}"
+                    );
+                    match KillSwitch::trigger(&reason) {
+                        Ok(()) => {
+                            let mut manager = evolve_event_manager.lock().await;
+                            manager.mark_isolated();
+                            if event_type == SecurityEventType::CanaryAccess {
+                                if let (Some(trap_type), Some(path)) =
+                                    (trap_type.as_deref(), resource.as_deref())
+                                {
+                                    if let Err(error) = manager.activate_feedback_from_canary(
+                                        trap_type,
+                                        std::path::Path::new(path),
+                                    ) {
+                                        error!(
+                                            event_id = %event_id,
+                                            error = %error,
+                                            "Evolve deeper deception activation failed after isolation"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            // KillSwitch itself is responsible for fail-closed behavior when the
+                            // kernel blackout cannot be installed. Keep a loud daemon-side trace.
+                            error!(
+                                event_id = %event_id,
+                                error = %err,
+                                "Evolve isolation request failed"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    });
 
     let health_router = Router::new()
         .route("/health", get(handle_health))
@@ -135,13 +212,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/arm_canary", post(routes::canary::handle_arm_canary))
         .route("/canary_status", get(routes::canary::handle_canary_status))
         .route(
-            "/evolve/status",
-            get(routes::evolve::handle_evolve_status),
+            "/evolve/enable",
+            post(routes::evolve::handle_set_enabled),
         )
-        .route(
-            "/evolve/observe",
-            post(routes::evolve::handle_evolve_observe),
-        )
+        .route("/evolve/status", get(routes::evolve::handle_status))
+        .route("/evolve/observe", post(routes::evolve::handle_observe))
+        .route("/evolve/sessions", get(routes::evolve::handle_sessions))
+        .route("/evolve/trace", get(routes::evolve::handle_trace))
+        .route("/evolve/events", get(routes::evolve::handle_events))
         .route("/http_probe", post(routes::probe::handle_http_probe))
         .route(
             "/browser_audit",
@@ -152,7 +230,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ratchet_auth_middleware,
         ))
         .layer(Extension(canary_mgr))
-        .layer(Extension(evolve_mgr));
+        .layer(Extension(evolve_mgr))
+        .layer(Extension(evolve_event_sink));
 
     let app = Router::new()
         .merge(health_router)
@@ -170,18 +249,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn handle_health(
     Extension(canary_mgr): Extension<Arc<Mutex<CanaryManager>>>,
-    Extension(evolve_mgr): Extension<EvolveManager>,
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
 ) -> Json<serde_json::Value> {
-    let mgr = canary_mgr.lock().await;
-    let evolve = evolve_mgr.status().ok();
+    let canary = canary_mgr.lock().await;
+    let evolve = evolve_mgr.lock().await;
     Json(json!({
         "status": "ok",
         "service": "sandbox-daemon",
         "version": "0.1.0",
         "isolated": sandbox_kernel::KillSwitch::is_isolated(),
-        "canary_armed": mgr.is_armed(),
-        "canary_traps_count": mgr.get_traps().len(),
-        "canary_triggered_count": mgr.triggered_count(),
-        "evolve": evolve
+        "canary_armed": canary.is_armed(),
+        "canary_traps_count": canary.get_traps().len(),
+        "canary_triggered_count": canary.triggered_count(),
+        "evolve": evolve.status(),
+        "evolve_feedback": evolve.feedback_status().ok()
     }))
 }

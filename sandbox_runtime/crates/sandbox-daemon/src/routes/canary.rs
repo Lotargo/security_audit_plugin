@@ -7,14 +7,17 @@ use tokio::sync::Mutex;
 use tracing::{error, info};
 
 use sandbox_kernel::canary::CanaryManager;
+use sandbox_kernel::EvolveManager;
 
 #[derive(Debug, Deserialize)]
 pub struct ArmCanaryRequest {
     pub base_dir: Option<String>,
+    pub evolve_session_id: Option<String>,
 }
 
 pub async fn handle_arm_canary(
     Extension(canary_mgr): Extension<Arc<Mutex<CanaryManager>>>,
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
     Json(payload): Json<ArmCanaryRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let base_path = PathBuf::from(payload.base_dir.unwrap_or_else(|| "/workspace".to_string()));
@@ -23,8 +26,22 @@ pub async fn handle_arm_canary(
         base_path
     );
 
+    {
+        let evolve = evolve_mgr.lock().await;
+        if let Err(error) = evolve.arm_feedback(&base_path) {
+            error!("Failed to arm Evolve feedback memory: {}", error);
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Failed to arm Evolve feedback memory: {}", error)})),
+            ));
+        }
+    }
+
     let mut mgr = canary_mgr.lock().await;
-    match mgr.arm_canaries(&base_path).await {
+    match mgr
+        .arm_canaries_for_session(&base_path, payload.evolve_session_id)
+        .await
+    {
         Ok(traps) => {
             let traps_summary: Vec<_> = traps
                 .iter()

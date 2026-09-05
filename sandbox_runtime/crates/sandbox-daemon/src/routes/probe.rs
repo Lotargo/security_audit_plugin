@@ -1,4 +1,4 @@
-use axum::{http::StatusCode, Json};
+use axum::{http::StatusCode, Extension, Json};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -6,6 +6,9 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Error as IoError, ErrorKind};
 use std::time::{Duration, Instant};
 use tracing::{error, info};
+
+use crate::evolve_events::EvolveEventSink;
+use sandbox_kernel::{EventSource, RiskLevel, SecurityEvent, SecurityEventType};
 
 const TOR_BROWSER_PROXY: &str = "socks5://127.0.0.1:9050";
 const TOR_HTTP_PROXY: &str = "socks5h://127.0.0.1:9050";
@@ -19,6 +22,7 @@ pub struct ProbeRequest {
     pub proxy: Option<String>,
     pub timeout_secs: Option<u64>,
     pub allowed_hosts: Option<Vec<String>>,
+    pub evolve_session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -73,11 +77,50 @@ fn has_forbidden_authority_header(headers: Option<&HashMap<String, String>>) -> 
     })
 }
 
+fn emit_probe_event(
+    event_sink: &EvolveEventSink,
+    payload: &ProbeRequest,
+    event_type: SecurityEventType,
+    source: EventSource,
+    risk: RiskLevel,
+    result: &str,
+) {
+    let mut event = SecurityEvent::new(source, event_type)
+        .with_destination(payload.url.clone())
+        .with_result(result.to_string())
+        .with_risk_hint(risk)
+        .with_metadata(json!({
+            "method": payload.method.as_deref().unwrap_or("GET").to_uppercase()
+        }));
+
+    if let Some(session_id) = payload.evolve_session_id.as_deref() {
+        event = event.with_session_id(session_id.to_string());
+    }
+
+    event_sink.emit(event);
+}
+
+fn emit_probe_policy_violation(
+    event_sink: &EvolveEventSink,
+    payload: &ProbeRequest,
+    reason: &str,
+) {
+    emit_probe_event(
+        event_sink,
+        payload,
+        SecurityEventType::PolicyViolation,
+        EventSource::Policy,
+        RiskLevel::Medium,
+        reason,
+    );
+}
+
 fn proxy_is_managed_tor(proxy: &str) -> bool {
     matches!(proxy.trim(), TOR_BROWSER_PROXY | TOR_HTTP_PROXY)
 }
 
 pub async fn handle_http_probe(
+    Extension(event_sink): Extension<EvolveEventSink>,
     Json(payload): Json<ProbeRequest>,
 ) -> Result<Json<ProbeResponse>, (StatusCode, Json<serde_json::Value>)> {
     let method_str = payload.method.as_deref().unwrap_or("GET").to_uppercase();
@@ -85,6 +128,11 @@ pub async fn handle_http_probe(
     let allowed_hosts = normalize_allowed_hosts(payload.allowed_hosts.clone());
 
     if allowed_hosts.is_empty() {
+        emit_probe_policy_violation(
+            &event_sink,
+            &payload,
+            "HTTP probe missing explicit RoE host allowlist",
+        );
         return Err((
             StatusCode::BAD_REQUEST,
             Json(json!({
@@ -93,6 +141,11 @@ pub async fn handle_http_probe(
         ));
     }
     if has_forbidden_authority_header(payload.headers.as_ref()) {
+        emit_probe_policy_violation(
+            &event_sink,
+            &payload,
+            "HTTP probe attempted Host/:authority override",
+        );
         return Err((
             StatusCode::BAD_REQUEST,
             Json(json!({
@@ -102,6 +155,11 @@ pub async fn handle_http_probe(
     }
     if let Some(proxy) = payload.proxy.as_deref() {
         if !proxy_is_managed_tor(proxy) {
+            emit_probe_policy_violation(
+                &event_sink,
+                &payload,
+                "HTTP probe attempted unmanaged proxy transport",
+            );
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(json!({
@@ -118,11 +176,25 @@ pub async fn handle_http_probe(
         )
     })?;
     if !url_matches_scope(&parsed_target, &allowed_hosts) {
+        emit_probe_policy_violation(
+            &event_sink,
+            &payload,
+            "HTTP probe URL is outside active RoE host scope",
+        );
         return Err((
             StatusCode::FORBIDDEN,
             Json(json!({"error": "Probe URL is outside the active RoE host scope"})),
         ));
     }
+
+    emit_probe_event(
+        &event_sink,
+        &payload,
+        SecurityEventType::HttpRequest,
+        EventSource::HttpProbe,
+        RiskLevel::Low,
+        "started",
+    );
 
     info!(
         "Sending HTTP probe: {} {} (proxy: {:?}, scope_hosts: {})",
@@ -203,12 +275,12 @@ pub async fn handle_http_probe(
         }
     };
 
-    if let Some(headers_map) = payload.headers {
+    if let Some(headers_map) = payload.headers.as_ref() {
         let mut header_map = HeaderMap::new();
         for (k, v) in headers_map {
             if let (Ok(h_name), Ok(h_val)) = (
                 HeaderName::from_bytes(k.as_bytes()),
-                HeaderValue::from_str(&v),
+                HeaderValue::from_str(v),
             ) {
                 header_map.insert(h_name, h_val);
             }
@@ -216,14 +288,29 @@ pub async fn handle_http_probe(
         req_builder = req_builder.headers(header_map);
     }
 
-    if let Some(body_content) = payload.body {
-        req_builder = req_builder.body(body_content);
+    if let Some(body_content) = payload.body.as_ref() {
+        req_builder = req_builder.body(body_content.clone());
     }
 
     let start_time = Instant::now();
     let response = match req_builder.send().await {
         Ok(resp) => resp,
         Err(e) => {
+            if e.to_string().contains("outside active RoE scope") {
+                emit_probe_policy_violation(
+                    &event_sink,
+                    &payload,
+                    "HTTP probe redirect attempted to leave active RoE host scope",
+                );
+            }
+            emit_probe_event(
+                &event_sink,
+                &payload,
+                SecurityEventType::HttpRequest,
+                EventSource::HttpProbe,
+                RiskLevel::Low,
+                "request_failed",
+            );
             error!("HTTP probe failed for {}: {}", payload.url, e);
             return Err((
                 StatusCode::BAD_GATEWAY,
@@ -273,6 +360,15 @@ pub async fn handle_http_probe(
         }
         _ => false,
     };
+
+    emit_probe_event(
+        &event_sink,
+        &payload,
+        SecurityEventType::HttpRequest,
+        EventSource::HttpProbe,
+        RiskLevel::Low,
+        &format!("status={status}"),
+    );
 
     Ok(Json(ProbeResponse {
         status,

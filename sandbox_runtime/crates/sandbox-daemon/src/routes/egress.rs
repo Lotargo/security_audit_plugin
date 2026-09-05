@@ -1,12 +1,19 @@
-use axum::{http::StatusCode, Json};
+use axum::{http::StatusCode, Extension, Json};
 use serde::Deserialize;
 use serde_json::json;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::{error, info, warn};
+
+use crate::evolve_events::EvolveEventSink;
 
 use sandbox_kernel::containment::apply_runtime_containment_with_agent_allowlist;
 use sandbox_kernel::egress::{is_valid_ip_or_cidr, EgressConfig, EgressError, EgressManager};
 use sandbox_kernel::panic::KillSwitch;
 use sandbox_kernel::stop_tor_best_effort;
+use sandbox_kernel::{
+    EventSource, EvolveManager, RiskLevel, SecurityEvent, SecurityEventType,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct EmergencyIsolateRequest {
@@ -19,6 +26,28 @@ pub struct ProvisionEgressRequest {
     pub config: EgressConfig,
     #[serde(default)]
     pub agent_allowed_cidrs: Vec<String>,
+}
+
+fn emit_egress_policy_violation(event_sink: &EvolveEventSink, reason: &str) {
+    event_sink.emit(
+        SecurityEvent::new(EventSource::Policy, SecurityEventType::PolicyViolation)
+            .with_resource("egress_scope")
+            .with_result(reason.to_string())
+            .with_risk_hint(RiskLevel::Medium),
+    );
+}
+
+fn isolation_latch_error() -> Option<(StatusCode, Json<serde_json::Value>)> {
+    if KillSwitch::is_isolated() {
+        Some((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "Emergency isolation is latched for this runtime. Recreate/reset the sandbox before provisioning any new egress scope."
+            })),
+        ))
+    } else {
+        None
+    }
 }
 
 fn bad_request(message: impl Into<String>) -> (StatusCode, Json<serde_json::Value>) {
@@ -53,6 +82,7 @@ fn validate_agent_allowlist(
 }
 
 pub async fn handle_provision_egress(
+    Extension(event_sink): Extension<EvolveEventSink>,
     Json(payload): Json<ProvisionEgressRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let ProvisionEgressRequest {
@@ -62,34 +92,40 @@ pub async fn handle_provision_egress(
 
     info!("Provisioning egress rules for mode: {:?}", config.mode);
 
-    if KillSwitch::is_isolated() {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(json!({
-                "error": "Emergency isolation is latched for this runtime. Recreate/reset the sandbox before provisioning any new egress scope."
-            })),
-        ));
+    if let Some(error) = isolation_latch_error() {
+        emit_egress_policy_violation(
+            &event_sink,
+            "attempted to provision egress while emergency isolation is latched",
+        );
+        return Err(error);
     }
 
     if config.proxy_enabled || config.proxy_target.is_some() {
-        return Err(bad_request(
-            "External upstream proxy containment is not implemented safely; only managed Tor is supported",
-        ));
+        let reason =
+            "External upstream proxy containment is not implemented safely; only managed Tor is supported";
+        emit_egress_policy_violation(&event_sink, reason);
+        return Err(bad_request(reason));
     }
     if config.tor_enabled && config.targets.is_empty() {
-        return Err(bad_request(
-            "Tor egress requires at least one explicit target; transport alone is not audit scope",
-        ));
+        let reason =
+            "Tor egress requires at least one explicit target; transport alone is not audit scope";
+        emit_egress_policy_violation(&event_sink, reason);
+        return Err(bad_request(reason));
     }
     if let Err(message) = validate_agent_allowlist(&config, &agent_allowed_cidrs) {
+        emit_egress_policy_violation(&event_sink, &message);
         return Err(bad_request(message));
     }
 
     let manager = EgressManager::new();
     if let Err(e) = manager.apply_rules(&config) {
         error!("Failed to apply egress rules: {}", e);
-        let status = match e {
+        let status = match &e {
             EgressError::InvalidAddress(_) | EgressError::InvalidPolicy(_) => {
+                emit_egress_policy_violation(
+                    &event_sink,
+                    &format!("Rejected invalid egress policy: {e}"),
+                );
                 StatusCode::BAD_REQUEST
             }
             _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -125,6 +161,7 @@ pub async fn handle_provision_egress(
 }
 
 pub async fn handle_emergency_isolate(
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
     Json(payload): Json<EmergencyIsolateRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let reason = payload
@@ -133,11 +170,15 @@ pub async fn handle_emergency_isolate(
     warn!("Emergency isolation request received: {}", reason);
 
     match KillSwitch::trigger(&reason) {
-        Ok(_) => Ok(Json(json!({
-            "status": "isolated",
-            "reason": reason,
-            "is_isolated": true
-        }))),
+        Ok(_) => {
+            let mut manager = evolve_mgr.lock().await;
+            manager.mark_isolated();
+            Ok(Json(json!({
+                "status": "isolated",
+                "reason": reason,
+                "is_isolated": true
+            })))
+        }
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": format!("Failed to trigger kill switch: {}", e)})),
@@ -157,6 +198,20 @@ mod tests {
     use sandbox_kernel::AuditMode;
 
     #[test]
+    fn emergency_isolation_latch_rejects_reprovisioning() {
+        KillSwitch::reset_isolation();
+        KillSwitch::trigger("unit test isolation latch").unwrap();
+        let (status, body) =
+            isolation_latch_error().expect("latched isolation must reject egress provisioning");
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body.0["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Recreate/reset"));
+        KillSwitch::reset_isolation();
+    }
+
+    #[test]
     fn raw_agent_allowlist_must_be_valid_subset() {
         let config = EgressConfig {
             mode: AuditMode::Remote,
@@ -167,26 +222,5 @@ mod tests {
         assert!(validate_agent_allowlist(&config, &["203.0.113.7/32".to_string()]).is_ok());
         assert!(validate_agent_allowlist(&config, &["198.51.100.9/32".to_string()]).is_err());
         assert!(validate_agent_allowlist(&config, &["not-a-cidr".to_string()]).is_err());
-    }
-
-    #[tokio::test]
-    async fn egress_cannot_be_reopened_while_emergency_isolation_is_latched() {
-        KillSwitch::reset_isolation();
-        KillSwitch::trigger("unit test isolation latch").unwrap();
-
-        let result = handle_provision_egress(Json(ProvisionEgressRequest {
-            config: EgressConfig::default(),
-            agent_allowed_cidrs: Vec::new(),
-        }))
-        .await;
-
-        let (status, body) = result.expect_err("latched isolation must reject egress provisioning");
-        assert_eq!(status, StatusCode::CONFLICT);
-        assert!(body.0["error"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("Recreate/reset"));
-
-        KillSwitch::reset_isolation();
     }
 }
