@@ -77,7 +77,7 @@ impl EvolveManager {
             state: self.state,
             events_buffered: self.events.len(),
             sessions: self.sessions.len(),
-            behavior_traces: self.behavior.traces().len(),
+            behavior_traces: self.behavior.trace_count(),
         }
     }
 
