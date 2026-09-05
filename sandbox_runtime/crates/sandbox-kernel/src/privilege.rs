@@ -2,6 +2,8 @@ pub const TOR_EXEC_UID: u32 = 65_531;
 pub const TOR_EXEC_GID: u32 = 65_531;
 pub const BROWSER_EXEC_UID: u32 = 65_532;
 pub const BROWSER_EXEC_GID: u32 = 65_532;
+pub const DECEPTION_EXEC_UID: u32 = 65_533;
+pub const DECEPTION_EXEC_GID: u32 = 65_533;
 
 /// Returns the explicitly configured numeric UID/GID for agent-controlled child processes.
 /// DockerRunner always injects these variables for the production sandbox. Host-side unit tests
@@ -29,9 +31,15 @@ pub fn browser_exec_identity() -> (u32, u32) {
     (BROWSER_EXEC_UID, BROWSER_EXEC_GID)
 }
 
+pub fn deception_exec_identity() -> (u32, u32) {
+    (DECEPTION_EXEC_UID, DECEPTION_EXEC_GID)
+}
+
 pub fn audit_identity_conflicts_with_reserved_runtime_uid() -> bool {
     configured_audit_exec_identity()
-        .map(|(uid, _)| uid == TOR_EXEC_UID || uid == BROWSER_EXEC_UID)
+        .map(|(uid, _)| {
+            uid == TOR_EXEC_UID || uid == BROWSER_EXEC_UID || uid == DECEPTION_EXEC_UID
+        })
         .unwrap_or(false)
 }
 
@@ -44,5 +52,8 @@ mod tests {
         assert_ne!(TOR_EXEC_UID, 0);
         assert_ne!(BROWSER_EXEC_UID, 0);
         assert_ne!(TOR_EXEC_UID, BROWSER_EXEC_UID);
+        assert_ne!(DECEPTION_EXEC_UID, 0);
+        assert_ne!(DECEPTION_EXEC_UID, TOR_EXEC_UID);
+        assert_ne!(DECEPTION_EXEC_UID, BROWSER_EXEC_UID);
     }
 }

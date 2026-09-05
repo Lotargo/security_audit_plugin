@@ -1,5 +1,7 @@
 use crate::egress::{split_ip_families, EgressConfig};
-use crate::privilege::{configured_audit_exec_identity, TOR_EXEC_UID};
+use crate::privilege::{
+    configured_audit_exec_identity, DECEPTION_EXEC_UID, TOR_EXEC_UID,
+};
 use std::collections::BTreeSet;
 #[cfg(target_os = "linux")]
 use std::process::Command;
@@ -25,7 +27,79 @@ fn planned_rules(
     // Agent-controlled shells never need direct access to Tor control services or DNS. Target
     // names are resolved by the trusted host for L3 pinning, while browser/probe clients use
     // their own managed resolver path. Blocking both UDP/TCP 53 closes DNS as an exfil channel.
+    let management_port =
+        std::env::var("PORT").unwrap_or_else(|_| "9999".to_string());
+
     let mut rules = vec![
+        vec![
+            "meta".into(),
+            "skuid".into(),
+            DECEPTION_EXEC_UID.to_string(),
+            "tcp".into(),
+            "dport".into(),
+            management_port,
+            "reject".into(),
+        ],
+        vec![
+            "meta".into(),
+            "skuid".into(),
+            DECEPTION_EXEC_UID.to_string(),
+            "tcp".into(),
+            "dport".into(),
+            "9050".into(),
+            "reject".into(),
+        ],
+        vec![
+            "meta".into(),
+            "skuid".into(),
+            DECEPTION_EXEC_UID.to_string(),
+            "tcp".into(),
+            "dport".into(),
+            "9051".into(),
+            "reject".into(),
+        ],
+        vec![
+            "meta".into(),
+            "skuid".into(),
+            DECEPTION_EXEC_UID.to_string(),
+            "udp".into(),
+            "dport".into(),
+            "53".into(),
+            "reject".into(),
+        ],
+        vec![
+            "meta".into(),
+            "skuid".into(),
+            DECEPTION_EXEC_UID.to_string(),
+            "tcp".into(),
+            "dport".into(),
+            "53".into(),
+            "reject".into(),
+        ],
+        vec![
+            "meta".into(),
+            "skuid".into(),
+            DECEPTION_EXEC_UID.to_string(),
+            "ip".into(),
+            "daddr".into(),
+            "127.0.0.0/8".into(),
+            "accept".into(),
+        ],
+        vec![
+            "meta".into(),
+            "skuid".into(),
+            DECEPTION_EXEC_UID.to_string(),
+            "ip6".into(),
+            "daddr".into(),
+            "::1/128".into(),
+            "accept".into(),
+        ],
+        vec![
+            "meta".into(),
+            "skuid".into(),
+            DECEPTION_EXEC_UID.to_string(),
+            "reject".into(),
+        ],
         vec![
             "meta".into(),
             "skuid".into(),
@@ -207,8 +281,16 @@ mod tests {
     #[test]
     fn local_containment_blocks_agent_from_tor_and_dns_services() {
         let rules = planned_rules(&EgressConfig::default(), 1001, &[]);
-        assert_eq!(rules.len(), 4);
         let rendered: Vec<String> = rules.iter().map(|rule| rule.join(" ")).collect();
+        assert!(rendered
+            .iter()
+            .any(|rule| rule == &format!("meta skuid {DECEPTION_EXEC_UID} tcp dport 9999 reject")));
+        assert!(rendered
+            .iter()
+            .any(|rule| rule == &format!("meta skuid {DECEPTION_EXEC_UID} ip daddr 127.0.0.0/8 accept")));
+        assert!(rendered
+            .iter()
+            .any(|rule| rule == &format!("meta skuid {DECEPTION_EXEC_UID} reject")));
         assert!(rendered
             .iter()
             .any(|rule| rule == "meta skuid 1001 tcp dport 9050 reject"));

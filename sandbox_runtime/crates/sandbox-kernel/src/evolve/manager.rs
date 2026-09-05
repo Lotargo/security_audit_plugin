@@ -1,6 +1,7 @@
 use super::{
-    BehaviorProfiler, BehaviorTrace, EvolveSession, EvolveState, FeedbackError, FeedbackEvent,
-    FeedbackMemory, FeedbackStatus, RiskLevel, SecurityEvent, StateTransitionError,
+    BehaviorProfiler, BehaviorTrace, DeceptionError, DeceptionFabric, DeceptionInstance,
+    EvolveSession, EvolveState, FeedbackError, FeedbackEvent, FeedbackMemory, FeedbackStatus,
+    RiskLevel, SecurityEvent, StateTransitionError,
 };
 use std::path::Path;
 use serde::Serialize;
@@ -25,6 +26,7 @@ pub struct EvolveStatus {
     pub events_buffered: usize,
     pub sessions: usize,
     pub behavior_traces: usize,
+    pub deception_instances: usize,
 }
 
 pub struct EvolveManager {
@@ -34,6 +36,7 @@ pub struct EvolveManager {
     sessions: HashMap<String, EvolveSession>,
     behavior: BehaviorProfiler,
     feedback: FeedbackMemory,
+    deception: DeceptionFabric,
     event_capacity: usize,
 }
 
@@ -58,6 +61,7 @@ impl EvolveManager {
             sessions,
             behavior: BehaviorProfiler::new(),
             feedback: FeedbackMemory::new(),
+            deception: DeceptionFabric::new(),
             event_capacity: DEFAULT_EVENT_CAPACITY,
         }
     }
@@ -108,6 +112,7 @@ impl EvolveManager {
             events_buffered: self.events.len(),
             sessions: self.sessions.len(),
             behavior_traces: self.behavior.trace_count(),
+            deception_instances: self.deception.instance_count(),
         }
     }
 
@@ -119,6 +124,26 @@ impl EvolveManager {
 
     pub fn behavior_trace(&self, session_id: &str) -> Option<BehaviorTrace> {
         self.behavior.trace(session_id).cloned()
+    }
+
+    pub fn prepare_deception_for_session(
+        &mut self,
+        session_id: &str,
+    ) -> Result<DeceptionInstance, DeceptionError> {
+        let trace = self
+            .behavior
+            .trace(session_id)
+            .cloned()
+            .ok_or_else(|| DeceptionError::MissingBehaviorTrace(session_id.to_string()))?;
+        let instance = self.deception.prepare(session_id, &trace)?;
+        if let Some(session) = self.sessions.get_mut(session_id) {
+            session.active_deception_profile = Some(instance.profile.id().to_string());
+        }
+        Ok(instance)
+    }
+
+    pub fn deception_instance(&self, session_id: &str) -> Option<DeceptionInstance> {
+        self.deception.instance(session_id).cloned()
     }
 
     pub fn recent_events(&self, limit: usize) -> Vec<SecurityEvent> {
@@ -194,9 +219,9 @@ impl EvolveManager {
             RiskLevel::High | RiskLevel::Critical => {
                 self.enter_suspect_state(&session_id);
 
-                // Phase 8.1 intentionally fails closed here. The event pipeline is active, but
-                // Deception Fabric is not implemented yet, so high-risk behavior cannot safely be
-                // redirected and must still escalate to existing isolation.
+                // Phase 8.3 now has a validated Deception Fabric model and dedicated identity,
+                // but automatic session redirection is not enabled yet. Until the redirect
+                // boundary exists, high-risk behavior still escalates to existing isolation.
                 EvolveDecision::Isolate
             }
         }
@@ -302,6 +327,27 @@ mod tests {
             .expect("behavior trace should exist");
         assert_eq!(trace.events.len(), 2);
         assert_eq!(trace.risk_level, RiskLevel::Medium);
+    }
+
+    #[test]
+    fn deception_profile_can_be_prepared_from_behavior_trace() {
+        let mut manager = EvolveManager::new();
+        let event = SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
+            .with_session_id("session-a")
+            .with_command("kubectl get pods");
+        manager.ingest_event(event);
+
+        let instance = manager
+            .prepare_deception_for_session("session-a")
+            .expect("deception should prepare");
+        assert_eq!(instance.profile.id(), "kubernetes-node");
+        assert_eq!(
+            manager
+                .deception_instance("session-a")
+                .expect("instance should exist")
+                .session_id,
+            "session-a"
+        );
     }
 
     #[test]

@@ -4,6 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use thiserror::Error;
 use tracing::{error, info};
 
+use crate::privilege::DECEPTION_EXEC_UID;
+
 static IS_ISOLATED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Error, Debug)]
@@ -55,6 +57,11 @@ table inet filter {{
     }}
     chain output {{
         type filter hook output priority 0; policy drop;
+        meta skuid {DECEPTION_EXEC_UID} tcp dport {mgmt_port} reject
+        meta skuid {DECEPTION_EXEC_UID} tcp dport 9050 reject
+        meta skuid {DECEPTION_EXEC_UID} tcp dport 9051 reject
+        meta skuid {DECEPTION_EXEC_UID} udp dport 53 reject
+        meta skuid {DECEPTION_EXEC_UID} tcp dport 53 reject
         oifname "lo" accept
         tcp sport {mgmt_port} accept
     }}

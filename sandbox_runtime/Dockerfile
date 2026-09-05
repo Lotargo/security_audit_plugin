@@ -62,7 +62,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd --gid 65531 audit-tor \
     && useradd --uid 65531 --gid 65531 --no-create-home --home-dir /var/lib/tor --shell /usr/sbin/nologin audit-tor \
     && groupadd --gid 65532 audit-browser \
-    && useradd --uid 65532 --gid 65532 --no-create-home --home-dir /tmp --shell /usr/sbin/nologin audit-browser
+    && useradd --uid 65532 --gid 65532 --no-create-home --home-dir /tmp --shell /usr/sbin/nologin audit-browser \
+    && groupadd --gid 65533 audit-deception \
+    && useradd --uid 65533 --gid 65533 --no-create-home --home-dir /tmp --shell /usr/sbin/nologin audit-deception
 
 COPY tor/torrc /etc/tor/torrc
 RUN mkdir -p /var/lib/tor \

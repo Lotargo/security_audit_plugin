@@ -259,7 +259,21 @@ Canary больше не должен напрямую вызывать KillSwit
 
 ### Phase 8.3 - Deception Fabric
 
-Реализовать:
+Текущий baseline уже реализует:
+
+- отдельную reserved identity `audit-deception` (UID/GID 65533);
+- identity-based deny rules для любого non-loopback egress deception workloads;
+- отдельный deny для daemon management port, Tor SOCKS/control и DNS;
+- те же deny-инварианты внутри emergency KillSwitch ruleset;
+- `DeceptionProfile`, `DeceptionInstance` и `DeceptionFabric`;
+- session-scoped synthetic filesystem root;
+- deterministic profile selection на основе `BehaviorTrace`;
+- loopback-only planned synthetic service descriptors;
+- validation, запрещающую unsafe session paths и non-loopback service endpoints.
+
+Автоматический redirect `HIGH -> ENGAGE -> DECEIVE` пока не включён. До появления безопасного redirect boundary HIGH/CRITICAL продолжают fail-closed через KillSwitch.
+
+Осталось реализовать:
 
 - `DeceptionProfile`;
 - `DeceptionInstance`;
