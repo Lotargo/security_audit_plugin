@@ -1,14 +1,17 @@
-use axum::{extract::Query, http::StatusCode, Json};
+use axum::{extract::Query, http::StatusCode, Extension, Json};
 use serde::Deserialize;
 use serde_json::json;
 use tracing::info;
 
+use crate::evolve_events::EvolveEventSink;
 use sandbox_kernel::tmux::TmuxManager;
+use sandbox_kernel::{EventSource, RiskLevel, SecurityEvent, SecurityEventType};
 
 #[derive(Debug, Deserialize)]
 pub struct StartBackgroundRequest {
     pub command: String,
     pub session: Option<String>,
+    pub evolve_session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -17,7 +20,28 @@ pub struct PollLogsQuery {
     pub last_lines: Option<usize>,
 }
 
+fn emit_background_event(
+    event_sink: &EvolveEventSink,
+    session_id: &str,
+    event_type: SecurityEventType,
+    command: Option<&str>,
+    result: &str,
+) {
+    let mut event = SecurityEvent::new(EventSource::Process, event_type)
+        .with_session_id(session_id.to_string())
+        .with_result(result.to_string())
+        .with_risk_hint(RiskLevel::Low)
+        .with_metadata(json!({"execution_mode": "tmux_background"}));
+
+    if let Some(command) = command {
+        event = event.with_command(command.to_string());
+    }
+
+    event_sink.emit(event);
+}
+
 pub async fn handle_start_background(
+    Extension(event_sink): Extension<EvolveEventSink>,
     Json(payload): Json<StartBackgroundRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let session = payload.session.unwrap_or_else(|| {
@@ -29,6 +53,9 @@ pub async fn handle_start_background(
                 .as_secs()
         )
     });
+    let event_session_id = payload
+        .evolve_session_id
+        .unwrap_or_else(|| session.clone());
 
     info!(
         "Starting background task in tmux session '{}': {}",
@@ -36,15 +63,33 @@ pub async fn handle_start_background(
     );
 
     match TmuxManager::start_session(&session, Some(&payload.command)) {
-        Ok(_) => Ok(Json(json!({
-            "status": "started",
-            "session": session,
-            "command": payload.command
-        }))),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to start background task: {}", e)})),
-        )),
+        Ok(_) => {
+            emit_background_event(
+                &event_sink,
+                &event_session_id,
+                SecurityEventType::ProcessExec,
+                Some(&payload.command),
+                "started",
+            );
+            Ok(Json(json!({
+                "status": "started",
+                "session": session,
+                "command": payload.command
+            })))
+        }
+        Err(e) => {
+            emit_background_event(
+                &event_sink,
+                &event_session_id,
+                SecurityEventType::ProcessExit,
+                Some(&payload.command),
+                "spawn_error",
+            );
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Failed to start background task: {}", e)})),
+            ))
+        }
     }
 }
 
@@ -70,6 +115,7 @@ pub async fn handle_poll_logs(
 }
 
 pub async fn handle_kill_background(
+    Extension(event_sink): Extension<EvolveEventSink>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let session = payload
@@ -78,7 +124,16 @@ pub async fn handle_kill_background(
         .unwrap_or("audit_session");
 
     match TmuxManager::kill_session(session) {
-        Ok(_) => Ok(Json(json!({"status": "killed", "session": session}))),
+        Ok(_) => {
+            emit_background_event(
+                &event_sink,
+                session,
+                SecurityEventType::ProcessExit,
+                None,
+                "killed",
+            );
+            Ok(Json(json!({"status": "killed", "session": session})))
+        }
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": format!("Failed to kill session: {}", e)})),
