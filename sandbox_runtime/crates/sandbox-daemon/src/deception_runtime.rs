@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::process::Stdio;
 use thiserror::Error;
-use tokio::process::{Child, Command};
+use tokio::process::Child;
 
 const SERVICE_BINARY: &str = "/opt/evolve-private/deception-service";
 

@@ -26,8 +26,8 @@ use evolve_events::EvolveEventSink;
 use sandbox_kernel::canary::CanaryManager;
 use sandbox_kernel::{
     apply_runtime_containment, audit_identity_conflicts_with_reserved_runtime_uid,
-    configured_audit_exec_identity, EgressConfig, EgressManager, EvolveDecision, EvolveManager,
-    KillSwitch, SecurityEventType,
+    configured_audit_exec_identity, terminate_audit_processes, EgressConfig, EgressManager,
+    EvolveDecision, EvolveManager, KillSwitch, SecurityEventType,
 };
 
 fn validate_runtime_identity_contract() -> Result<(), Box<dyn std::error::Error>> {
@@ -118,9 +118,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Deception Fabric can now be prepared and exercised explicitly, but automatic redirection is
     // not enabled until a session-level real-to-shadow boundary can be proven safe.
     let evolve_event_manager = evolve_mgr.clone();
+    let evolve_event_deception_runtime = deception_runtime.clone();
     tokio::spawn(async move {
         while let Some(event) = evolve_event_rx.recv().await {
             let event_id = event.event_id.clone();
+            let session_id = event
+                .session_id
+                .clone()
+                .unwrap_or_else(|| "runtime-default".to_string());
             let resource = event.resource.clone();
             let event_type = event.event_type;
             let trap_type = event
@@ -142,6 +147,101 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         event_id = %event_id,
                         resource = ?resource,
                         "Evolve entered suspicious observation state"
+                    );
+                }
+                EvolveDecision::EngageDeception => {
+                    let reason = format!(
+                        "Evolve high-risk session containment before deception: session={session_id}, event_id={event_id}"
+                    );
+
+                    if let Err(error) = KillSwitch::trigger(&reason) {
+                        error!(
+                            event_id = %event_id,
+                            error = %error,
+                            "Evolve failed to establish network containment"
+                        );
+                        let mut manager = evolve_event_manager.lock().await;
+                        manager.mark_isolated();
+                        continue;
+                    }
+
+                    if let Err(error) = terminate_audit_processes() {
+                        error!(
+                            event_id = %event_id,
+                            error = %error,
+                            "Evolve failed to terminate pre-deception audit processes"
+                        );
+                        let mut manager = evolve_event_manager.lock().await;
+                        manager.mark_isolated();
+                        continue;
+                    }
+
+                    let instance = {
+                        let mut manager = evolve_event_manager.lock().await;
+                        match manager.prepare_deception_for_session(&session_id) {
+                            Ok(instance) => instance,
+                            Err(error) => {
+                                error!(
+                                    event_id = %event_id,
+                                    error = %error,
+                                    "Evolve failed to prepare deception instance"
+                                );
+                                manager.mark_isolated();
+                                continue;
+                            }
+                        }
+                    };
+
+                    let runtime_started = {
+                        let mut runtime = evolve_event_deception_runtime.lock().await;
+                        runtime.start_instance(&instance).await
+                    };
+
+                    if let Err(error) = runtime_started {
+                        error!(
+                            event_id = %event_id,
+                            error = %error,
+                            "Evolve failed to start deception services"
+                        );
+                        let mut manager = evolve_event_manager.lock().await;
+                        let _ = manager.destroy_deception_for_session(&session_id);
+                        manager.mark_isolated();
+                        continue;
+                    }
+
+                    let mut manager = evolve_event_manager.lock().await;
+                    if let Err(error) = manager.mark_deception_active(&session_id) {
+                        error!(
+                            event_id = %event_id,
+                            error = %error,
+                            "Evolve failed to complete ENGAGE -> DECEIVE transition"
+                        );
+                        manager.mark_isolated();
+                        continue;
+                    }
+
+                    if event_type == SecurityEventType::CanaryAccess {
+                        if let (Some(trap_type), Some(path)) =
+                            (trap_type.as_deref(), resource.as_deref())
+                        {
+                            if let Err(error) = manager.activate_feedback_from_canary(
+                                trap_type,
+                                std::path::Path::new(path),
+                            ) {
+                                error!(
+                                    event_id = %event_id,
+                                    error = %error,
+                                    "Evolve feedback activation failed after deception engagement"
+                                );
+                            }
+                        }
+                    }
+
+                    info!(
+                        event_id = %event_id,
+                        session_id = %session_id,
+                        profile = %instance.profile.id(),
+                        "Evolve session entered DECEIVE"
                     );
                 }
                 EvolveDecision::LegacyIsolate | EvolveDecision::Isolate => {

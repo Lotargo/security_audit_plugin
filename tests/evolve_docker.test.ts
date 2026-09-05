@@ -41,9 +41,9 @@ describeDocker('Evolve live Docker behavior pipeline', () => {
     expect(network.exit_code).not.toBe(0);
 
     const status = await bridge.getEvolveStatus();
-    expect(status.enabled).toBe(true);
-    expect(status.state).toBe('SUSPECT');
-    expect(status.behavior_traces).toBeGreaterThan(0);
+    expect(status.runtime.enabled).toBe(true);
+    expect(status.runtime.state).toBe('SUSPECT');
+    expect(status.runtime.behavior_traces).toBeGreaterThan(0);
 
     const sessions = await bridge.getEvolveSessions();
     const activeSession = sessions.sessions.find(
@@ -121,4 +121,60 @@ describeDocker('Evolve live Docker behavior pipeline', () => {
     );
     expect(blocked.exit_code).not.toBe(0);
   }, 10_000);
+});
+
+describeDocker('Evolve automatic containment-to-deception transition', () => {
+  let bridge: SandboxBridge;
+  let workspace: string;
+  const port = 19119;
+
+  beforeAll(async () => {
+    workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'security-audit-evolve-auto-'));
+    bridge = new SandboxBridge({ workspaceRoot: workspace, hostPort: port });
+    await bridge.ensureRuntime();
+    await bridge.setScope({ mode: 'local', arm_canaries: true });
+    await bridge.setEvolveEnabled(true);
+  }, 60_000);
+
+  afterAll(() => {
+    try {
+      bridge?.getDocker().stop();
+    } finally {
+      if (workspace) fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('moves a canary-triggered session from real execution into the synthetic shell', async () => {
+    const trigger = await bridge.exec(
+      'printf "\\n# touched\\n" >> /workspace/.env.decoy; sleep 1'
+    );
+    expect([0, -1, 137]).toContain(trigger.exit_code);
+
+    let status: any = null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      status = await bridge.getEvolveStatus();
+      if (status.runtime.state === 'DECEIVE') break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(status.runtime.state).toBe('DECEIVE');
+
+    const identity = await bridge.exec('id -u');
+    expect(identity.exit_code).toBe(0);
+    expect(identity.stdout.trim()).toBe('65533');
+
+    const workspaceView = await bridge.exec('pwd; ls -la /workspace; cat /workspace/manifest.json');
+    expect(workspaceView.exit_code).toBe(0);
+    expect(workspaceView.stdout).toContain('/workspace');
+    expect(workspaceView.stdout).toContain('"environment": "production"');
+
+    const management = await bridge.exec(
+      'curl -fsS --connect-timeout 1 --max-time 2 http://127.0.0.1:9999/health'
+    );
+    expect(management.exit_code).not.toBe(0);
+
+    const external = await bridge.exec(
+      'curl -fsS --connect-timeout 1 --max-time 2 http://1.1.1.1/'
+    );
+    expect(external.exit_code).not.toBe(0);
+  }, 20_000);
 });

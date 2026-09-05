@@ -8,7 +8,9 @@ pub mod tmux;
 pub mod watchdog;
 
 pub use canary::{CanaryManager, CanaryTrap};
-pub use containment::{apply_runtime_containment, stop_tor_best_effort, ContainmentError};
+pub use containment::{
+    apply_runtime_containment, stop_tor_best_effort, terminate_audit_processes, ContainmentError,
+};
 pub use egress::{AuditMode, EgressConfig, EgressManager};
 pub use evolve::{
     BehaviorAssessment, BehaviorProfiler, BehaviorTag, BehaviorTrace, DeceptionError,

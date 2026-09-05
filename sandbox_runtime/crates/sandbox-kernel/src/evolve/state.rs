@@ -43,6 +43,8 @@ impl EvolveState {
 pub enum StateTransitionError {
     #[error("invalid Evolve state transition: {from:?} -> {to:?}")]
     InvalidTransition { from: EvolveState, to: EvolveState },
+    #[error("Evolve session not found: {0}")]
+    MissingSession(String),
 }
 
 #[cfg(test)]

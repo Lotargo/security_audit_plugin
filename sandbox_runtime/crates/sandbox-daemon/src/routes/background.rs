@@ -1,11 +1,15 @@
 use axum::{extract::Query, http::StatusCode, Extension, Json};
 use serde::Deserialize;
 use serde_json::json;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::info;
 
 use crate::evolve_events::EvolveEventSink;
 use sandbox_kernel::tmux::TmuxManager;
-use sandbox_kernel::{EventSource, RiskLevel, SecurityEvent, SecurityEventType};
+use sandbox_kernel::{
+    EventSource, EvolveManager, EvolveState, RiskLevel, SecurityEvent, SecurityEventType,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct StartBackgroundRequest {
@@ -42,6 +46,7 @@ fn emit_background_event(
 
 pub async fn handle_start_background(
     Extension(event_sink): Extension<EvolveEventSink>,
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
     Json(payload): Json<StartBackgroundRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let session = payload.session.unwrap_or_else(|| {
@@ -56,6 +61,18 @@ pub async fn handle_start_background(
     let event_session_id = payload
         .evolve_session_id
         .unwrap_or_else(|| session.clone());
+
+    {
+        let manager = evolve_mgr.lock().await;
+        if manager.session_state(&event_session_id) == Some(EvolveState::Deceive) {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": "background execution is blocked on a deceived session until shadow background jobs are implemented"
+                })),
+            ));
+        }
+    }
 
     info!(
         "Starting background task in tmux session '{}': {}",

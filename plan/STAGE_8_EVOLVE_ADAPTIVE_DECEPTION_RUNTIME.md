@@ -284,7 +284,31 @@ Canary больше не должен напрямую вызывать KillSwit
 - synthetic services теперь также запускаются внутри отдельного bubblewrap filesystem/PID/UTS sandbox;
 - trusted `/usr/local` маскируется внутри deception namespace, чтобы sandbox binaries не раскрывали механизм обмана.
 
-Автоматический redirect `HIGH -> ENGAGE -> DECEIVE` пока не включён. До появления безопасного redirect boundary HIGH/CRITICAL продолжают fail-closed через KillSwitch.
+Автоматический redirect для `HIGH` теперь включён в containment-first режиме:
+
+```text
+HIGH
+ ↓
+KillSwitch
+ ↓
+terminate existing audit UID + tmux processes
+ ↓
+prepare DeceptionInstance
+ ↓
+start isolated shadow services
+ ↓
+ENGAGE
+ ↓
+DECEIVE
+ ↓
+subsequent sync exec -> bubblewrap synthetic surface
+```
+
+`CRITICAL` по-прежнему приводит к терминальному `ISOLATE`.
+
+Поскольку audit identity пока общая для runtime, HIGH-контейнмент временно изолирует сеть всего sandbox, а не только одной behavioral session. Это сознательный fail-closed компромисс до per-session execution identities.
+
+Background/tmux execution внутри DECEIVE пока запрещено fail-closed, чтобы команда не могла вернуться на реальную filesystem surface.
 
 Осталось реализовать:
 

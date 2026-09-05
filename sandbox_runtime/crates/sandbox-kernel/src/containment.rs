@@ -2,6 +2,8 @@ use crate::egress::{split_ip_families, EgressConfig};
 use crate::privilege::{
     configured_audit_exec_identity, DECEPTION_EXEC_UID, TOR_EXEC_UID,
 };
+#[cfg(target_os = "linux")]
+use crate::tmux::TmuxManager;
 use std::collections::BTreeSet;
 #[cfg(target_os = "linux")]
 use std::process::Command;
@@ -17,6 +19,8 @@ pub enum ContainmentError {
     RuleFailed(String),
     #[error("I/O error while applying runtime containment: {0}")]
     IoError(#[from] std::io::Error),
+    #[error("Failed to terminate pre-deception audit processes: {0}")]
+    ProcessTerminationFailed(String),
 }
 
 fn planned_rules(
@@ -265,6 +269,49 @@ pub fn apply_runtime_containment_with_agent_allowlist(
     let _ = rules;
 
     Ok(())
+}
+
+/// Terminates all existing agent-controlled processes before a session is moved to deception.
+pub fn terminate_audit_processes() -> Result<(), ContainmentError> {
+    #[cfg(target_os = "linux")]
+    {
+        let (audit_uid, _) =
+            configured_audit_exec_identity().ok_or(ContainmentError::MissingAuditIdentity)?;
+
+        // Tmux servers are root-owned control processes. Kill them first so a pane shell cannot be
+        // respawned after the audit UID is quarantined.
+        let _ = TmuxManager::reap_orphaned_tmux_sessions();
+
+        let uid = audit_uid.to_string();
+        let kill = Command::new("pkill")
+            .args(["-KILL", "-u", uid.as_str()])
+            .status()?;
+        if !kill.success() && kill.code() != Some(1) {
+            return Err(ContainmentError::ProcessTerminationFailed(format!(
+                "pkill exited with status {kill}"
+            )));
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(25));
+
+        let verify = Command::new("pgrep")
+            .args(["-u", uid.as_str()])
+            .status()?;
+        match verify.code() {
+            Some(1) => Ok(()),
+            Some(0) => Err(ContainmentError::ProcessTerminationFailed(
+                "audit UID still owns running processes after SIGKILL".to_string(),
+            )),
+            _ => Err(ContainmentError::ProcessTerminationFailed(format!(
+                "pgrep exited with status {verify}"
+            ))),
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(())
+    }
 }
 
 /// If containment cannot be restored after a ruleset replacement, stop Tor so an old circuit

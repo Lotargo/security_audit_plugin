@@ -16,6 +16,7 @@ pub enum EvolveDecision {
     LegacyIsolate,
     Observe,
     EnhancedTelemetry,
+    EngageDeception,
     Isolate,
 }
 
@@ -146,6 +147,45 @@ impl EvolveManager {
         self.deception.instance(session_id).cloned()
     }
 
+    pub fn session_state(&self, session_id: &str) -> Option<EvolveState> {
+        self.sessions.get(session_id).map(|session| session.state)
+    }
+
+    pub fn mark_deception_active(
+        &mut self,
+        session_id: &str,
+    ) -> Result<(), StateTransitionError> {
+        if self.state == EvolveState::Suspect {
+            self.transition(EvolveState::Engage)?;
+            self.transition(EvolveState::Deceive)?;
+        }
+
+        let session = self
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(|| StateTransitionError::MissingSession(session_id.to_string()))?;
+
+        if session.state == EvolveState::Deceive {
+            return Ok(());
+        }
+        if !session.state.can_transition_to(EvolveState::Engage) {
+            return Err(StateTransitionError::InvalidTransition {
+                from: session.state,
+                to: EvolveState::Engage,
+            });
+        }
+        session.state = EvolveState::Engage;
+
+        if !session.state.can_transition_to(EvolveState::Deceive) {
+            return Err(StateTransitionError::InvalidTransition {
+                from: session.state,
+                to: EvolveState::Deceive,
+            });
+        }
+        session.state = EvolveState::Deceive;
+        Ok(())
+    }
+
     pub fn destroy_deception_for_session(
         &mut self,
         session_id: &str,
@@ -206,6 +246,7 @@ impl EvolveManager {
             .entry(session_id.clone())
             .or_insert_with(|| EvolveSession::new(session_id.clone()));
         session.record_event(&event);
+        let session_state = session.state;
 
         let risk = assessment.risk_level;
         let event_type = event.event_type;
@@ -220,18 +261,25 @@ impl EvolveManager {
             };
         }
 
+        if session_state == EvolveState::Deceive {
+            return match risk {
+                RiskLevel::Critical => EvolveDecision::Isolate,
+                _ => EvolveDecision::Observe,
+            };
+        }
+
         match risk {
             RiskLevel::Low => EvolveDecision::Observe,
             RiskLevel::Medium => {
                 self.enter_suspect_state(&session_id);
                 EvolveDecision::EnhancedTelemetry
             }
-            RiskLevel::High | RiskLevel::Critical => {
+            RiskLevel::High => {
                 self.enter_suspect_state(&session_id);
-
-                // Phase 8.3 now has a validated Deception Fabric model and dedicated identity,
-                // but automatic session redirection is not enabled yet. Until the redirect
-                // boundary exists, high-risk behavior still escalates to existing isolation.
+                EvolveDecision::EngageDeception
+            }
+            RiskLevel::Critical => {
+                self.enter_suspect_state(&session_id);
                 EvolveDecision::Isolate
             }
         }
@@ -301,15 +349,45 @@ mod tests {
     }
 
     #[test]
-    fn enabled_high_risk_fails_closed_until_deception_exists() {
+    fn enabled_high_risk_requests_deception_engagement() {
         let mut manager = EvolveManager::new();
         manager.set_enabled(true);
 
         let event = SecurityEvent::new(EventSource::Canary, SecurityEventType::CanaryAccess)
             .with_risk_hint(RiskLevel::High);
 
-        assert_eq!(manager.ingest_event(event), EvolveDecision::Isolate);
+        assert_eq!(
+            manager.ingest_event(event),
+            EvolveDecision::EngageDeception
+        );
         assert_eq!(manager.state(), EvolveState::Suspect);
+    }
+
+    #[test]
+    fn engaged_session_keeps_collecting_noncritical_behavior() {
+        let temp = TempDir::new().unwrap();
+        let mut manager = EvolveManager::new();
+        manager.deception = DeceptionFabric::with_root(temp.path().join("deception"));
+        manager.set_enabled(true);
+
+        let event = SecurityEvent::new(EventSource::Canary, SecurityEventType::CanaryAccess)
+            .with_session_id("session-a")
+            .with_risk_hint(RiskLevel::High);
+        assert_eq!(
+            manager.ingest_event(event),
+            EvolveDecision::EngageDeception
+        );
+        manager.prepare_deception_for_session("session-a").unwrap();
+        manager.mark_deception_active("session-a").unwrap();
+
+        let follow_up = SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
+            .with_session_id("session-a")
+            .with_command("curl http://vault.prod.internal:18200/");
+        assert_eq!(manager.ingest_event(follow_up), EvolveDecision::Observe);
+        assert_eq!(
+            manager.session_state("session-a"),
+            Some(EvolveState::Deceive)
+        );
     }
 
     #[test]
