@@ -62,6 +62,15 @@ pub async fn handle_provision_egress(
 
     info!("Provisioning egress rules for mode: {:?}", config.mode);
 
+    if KillSwitch::is_isolated() {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "Emergency isolation is latched for this runtime. Recreate/reset the sandbox before provisioning any new egress scope."
+            })),
+        ));
+    }
+
     if config.proxy_enabled || config.proxy_target.is_some() {
         return Err(bad_request(
             "External upstream proxy containment is not implemented safely; only managed Tor is supported",
