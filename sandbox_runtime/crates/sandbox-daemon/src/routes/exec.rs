@@ -216,13 +216,18 @@ pub async fn handle_execute(
 
     #[cfg(target_os = "windows")]
     let mut cmd = {
+        use std::process::Stdio;
         let mut c = Command::new("powershell");
         c.args(["-NoProfile", "-Command", &command_text]);
+        c.stdin(Stdio::null());
+        c.stdout(Stdio::piped());
+        c.stderr(Stdio::piped());
         c
     };
 
     #[cfg(not(target_os = "windows"))]
     let mut cmd = {
+        use std::process::Stdio;
         let mut c = Command::new("/bin/sh");
         c.args(["-c", &command_text]);
         let (uid, gid) = audit_exec_identity();
@@ -234,6 +239,9 @@ pub async fn handle_execute(
         c.env("HOME", "/tmp");
         c.env("PATH", SAFE_CHILD_PATH);
         c.env("LANG", "C.UTF-8");
+        c.stdin(Stdio::null());
+        c.stdout(Stdio::piped());
+        c.stderr(Stdio::piped());
         c
     };
 

@@ -11,7 +11,7 @@ function bodyFor(
   request: any,
   path: string
 ): Record<string, unknown> {
-  const call = request.mock.calls.find((entry) => entry[1] === path);
+  const call = request.mock.calls.find((entry: any[]) => entry[1] === path);
   if (!call) throw new Error(`Expected request to ${path}`);
   return (call[2] || {}) as Record<string, unknown>;
 }

@@ -418,7 +418,7 @@ mod tests {
     #[test]
     fn behavior_can_expose_relevant_hidden_node() {
         let mut path =
-            ShadowAttackPath::build("session-a", DeceptionProfile::DeveloperWorkstation).unwrap();
+            ShadowAttackPath::build("session-a", DeceptionProfile::CiRunner).unwrap();
         let event = SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
             .with_command("kubectl get pods");
 

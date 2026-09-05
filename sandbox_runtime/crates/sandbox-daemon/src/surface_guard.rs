@@ -28,10 +28,14 @@ pub fn resolve_agent_surface(
             Some(EvolveState::Deceive) => Ok(AgentSurface::Deception),
             _ => Err(AgentSurfaceUnavailable),
         },
-        EvolveState::Engage
-        | EvolveState::Learn
-        | EvolveState::Adapt
-        | EvolveState::Isolate => Err(AgentSurfaceUnavailable),
+        EvolveState::Engage | EvolveState::Learn | EvolveState::Adapt => {
+            Err(AgentSurfaceUnavailable)
+        }
+        // Terminal ISOLATE is network containment, not deception. Local forensics
+        // commands must keep working so callers can verify fail-closed egress
+        // (curl exits non-zero) via normal exec; the nftables kill-switch already
+        // blocks the actual network path.
+        EvolveState::Isolate => Ok(AgentSurface::Real),
     }
 }
 

@@ -201,13 +201,17 @@ export class SandboxBridge {
         return this.request<T>(method, apiPath, bodyObj, retryCount - 1);
       }
 
+      // Non-2xx with an empty or non-JSON body (e.g. daemon restart mid-request)
+      // must surface as an HTTP error, never as a raw SyntaxError from JSON.parse.
+      let errMessage: string;
       try {
         const errObj = JSON.parse(data);
-        throw new Error(errObj.error || `HTTP ${statusCode}: ${data}`);
-      } catch (parseErr: any) {
-        if (parseErr.message && !parseErr.message.startsWith('HTTP')) throw parseErr;
-        throw new Error(`HTTP ${statusCode}: ${data}`);
+        errMessage =
+          (typeof errObj?.error === 'string' && errObj.error) || `HTTP ${statusCode}: ${data}`;
+      } catch {
+        errMessage = `HTTP ${statusCode}: ${data}`;
       }
+      throw new Error(errMessage);
     } catch (err: any) {
       if (retryCount > 0 && err.message && (err.message.includes('401') || err.message.includes('403'))) {
         await new Promise((r) => setTimeout(r, 150));
@@ -582,9 +586,11 @@ export class SandboxBridge {
   }
 
   public async reset(fullCleanup: boolean = false): Promise<{ status: string; message: string }> {
+    // Terminal ISOLATE containment (e.g. after a manual killSwitch) must remain
+    // recoverable via reset; active deception engagement states stay locked.
     const status = await this.getEvolveStatus();
     const runtimeState = status?.runtime?.state ?? status?.state;
-    if (['ENGAGE', 'DECEIVE', 'LEARN', 'ADAPT', 'ISOLATE'].includes(runtimeState)) {
+    if (['ENGAGE', 'DECEIVE', 'LEARN', 'ADAPT'].includes(runtimeState)) {
       throw new Error('Sandbox reset temporarily unavailable');
     }
 
