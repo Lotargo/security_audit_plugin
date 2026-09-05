@@ -8,7 +8,7 @@ function mockedBridge() {
 }
 
 function bodyFor(
-  request: ReturnType<typeof vi.spyOn>,
+  request: any,
   path: string
 ): Record<string, unknown> {
   const call = request.mock.calls.find((entry) => entry[1] === path);
