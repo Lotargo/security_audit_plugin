@@ -246,10 +246,11 @@ mod tests {
         assert_eq!(traps.len(), 5);
         assert!(manager.is_armed());
         assert_eq!(manager.triggered_count(), 0);
-        assert!(temp_dir
+        assert!(!temp_dir
             .path()
             .join(".deployment/prod/manifest.json")
             .exists());
+        assert!(temp_dir.path().join(".evolve/profile.json").exists());
 
         for trap in &traps {
             assert!(trap.file_path.exists());
