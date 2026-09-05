@@ -3,8 +3,8 @@ use super::{
     EvolveSession, EvolveState, FeedbackError, FeedbackEvent, FeedbackMemory, FeedbackStatus,
     RiskLevel, SecurityEvent, StateTransitionError,
 };
-use std::path::Path;
 use serde::Serialize;
+use std::path::Path;
 use std::collections::{HashMap, VecDeque};
 
 const DEFAULT_EVENT_CAPACITY: usize = 1024;
@@ -250,7 +250,8 @@ impl EvolveManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evolve::{EventSource, SecurityEventType};
+    use crate::evolve::{DeceptionFabric, EventSource, SecurityEventType};
+    use tempfile::TempDir;
 
     #[test]
     fn disabled_manager_preserves_canary_legacy_isolation_decision() {
@@ -331,7 +332,9 @@ mod tests {
 
     #[test]
     fn deception_profile_can_be_prepared_from_behavior_trace() {
+        let temp = TempDir::new().unwrap();
         let mut manager = EvolveManager::new();
+        manager.deception = DeceptionFabric::with_root(temp.path().join("deception"));
         let event = SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
             .with_session_id("session-a")
             .with_command("kubectl get pods");
