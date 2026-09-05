@@ -1,12 +1,19 @@
-use axum::{http::StatusCode, Json};
+use axum::{http::StatusCode, Extension, Json};
 use serde::Deserialize;
 use serde_json::json;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::{error, info, warn};
+
+use crate::evolve_events::EvolveEventSink;
 
 use sandbox_kernel::containment::apply_runtime_containment_with_agent_allowlist;
 use sandbox_kernel::egress::{is_valid_ip_or_cidr, EgressConfig, EgressError, EgressManager};
 use sandbox_kernel::panic::KillSwitch;
 use sandbox_kernel::stop_tor_best_effort;
+use sandbox_kernel::{
+    EventSource, EvolveManager, RiskLevel, SecurityEvent, SecurityEventType,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct EmergencyIsolateRequest {
@@ -19,6 +26,15 @@ pub struct ProvisionEgressRequest {
     pub config: EgressConfig,
     #[serde(default)]
     pub agent_allowed_cidrs: Vec<String>,
+}
+
+fn emit_egress_policy_violation(event_sink: &EvolveEventSink, reason: &str) {
+    event_sink.emit(
+        SecurityEvent::new(EventSource::Policy, SecurityEventType::PolicyViolation)
+            .with_resource("egress_scope")
+            .with_result(reason.to_string())
+            .with_risk_hint(RiskLevel::Medium),
+    );
 }
 
 fn bad_request(message: impl Into<String>) -> (StatusCode, Json<serde_json::Value>) {
@@ -53,6 +69,7 @@ fn validate_agent_allowlist(
 }
 
 pub async fn handle_provision_egress(
+    Extension(event_sink): Extension<EvolveEventSink>,
     Json(payload): Json<ProvisionEgressRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let ProvisionEgressRequest {
@@ -63,16 +80,19 @@ pub async fn handle_provision_egress(
     info!("Provisioning egress rules for mode: {:?}", config.mode);
 
     if config.proxy_enabled || config.proxy_target.is_some() {
-        return Err(bad_request(
-            "External upstream proxy containment is not implemented safely; only managed Tor is supported",
-        ));
+        let reason =
+            "External upstream proxy containment is not implemented safely; only managed Tor is supported";
+        emit_egress_policy_violation(&event_sink, reason);
+        return Err(bad_request(reason));
     }
     if config.tor_enabled && config.targets.is_empty() {
-        return Err(bad_request(
-            "Tor egress requires at least one explicit target; transport alone is not audit scope",
-        ));
+        let reason =
+            "Tor egress requires at least one explicit target; transport alone is not audit scope";
+        emit_egress_policy_violation(&event_sink, reason);
+        return Err(bad_request(reason));
     }
     if let Err(message) = validate_agent_allowlist(&config, &agent_allowed_cidrs) {
+        emit_egress_policy_violation(&event_sink, &message);
         return Err(bad_request(message));
     }
 
@@ -81,6 +101,10 @@ pub async fn handle_provision_egress(
         error!("Failed to apply egress rules: {}", e);
         let status = match e {
             EgressError::InvalidAddress(_) | EgressError::InvalidPolicy(_) => {
+                emit_egress_policy_violation(
+                    &event_sink,
+                    &format!("Rejected invalid egress policy: {e}"),
+                );
                 StatusCode::BAD_REQUEST
             }
             _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -116,6 +140,7 @@ pub async fn handle_provision_egress(
 }
 
 pub async fn handle_emergency_isolate(
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
     Json(payload): Json<EmergencyIsolateRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let reason = payload
@@ -124,11 +149,15 @@ pub async fn handle_emergency_isolate(
     warn!("Emergency isolation request received: {}", reason);
 
     match KillSwitch::trigger(&reason) {
-        Ok(_) => Ok(Json(json!({
-            "status": "isolated",
-            "reason": reason,
-            "is_isolated": true
-        }))),
+        Ok(_) => {
+            let mut manager = evolve_mgr.lock().await;
+            manager.mark_isolated();
+            Ok(Json(json!({
+                "status": "isolated",
+                "reason": reason,
+                "is_isolated": true
+            })))
+        }
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": format!("Failed to trigger kill switch: {}", e)})),
