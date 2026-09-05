@@ -20,6 +20,7 @@ mod deception_runtime;
 mod deception_sandbox;
 mod evolve_events;
 mod routes;
+mod surface_guard;
 
 use auth::{ratchet_auth_middleware, RatchetAuthState};
 use deception_runtime::DeceptionRuntime;
@@ -151,6 +152,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                 }
                 EvolveDecision::EngageDeception => {
+                    {
+                        let mut manager = evolve_event_manager.lock().await;
+                        if let Err(error) = manager.begin_deception_engagement(&session_id) {
+                            error!(
+                                event_id = %event_id,
+                                error = %error,
+                                "Evolve failed to latch the engagement boundary"
+                            );
+                            manager.mark_isolated();
+                            continue;
+                        }
+                    }
+
                     let reason = format!(
                         "Evolve high-risk session containment before deception: session={session_id}, event_id={event_id}"
                     );
@@ -285,10 +299,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let health_router = Router::new()
-        .route("/health", get(handle_health))
-        .layer(Extension(canary_mgr.clone()))
-        .layer(Extension(evolve_mgr.clone()));
+    let health_router = Router::new().route("/health", get(handle_health));
 
     let protected_routes = Router::new()
         .route("/execute", post(routes::exec::handle_execute))
@@ -382,21 +393,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn handle_health(
-    Extension(canary_mgr): Extension<Arc<Mutex<CanaryManager>>>,
-    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
-) -> Json<serde_json::Value> {
-    let canary = canary_mgr.lock().await;
-    let evolve = evolve_mgr.lock().await;
-    Json(json!({
-        "status": "ok",
-        "service": "sandbox-daemon",
-        "version": "0.1.0",
-        "isolated": sandbox_kernel::KillSwitch::is_isolated(),
-        "canary_armed": canary.is_armed(),
-        "canary_traps_count": canary.get_traps().len(),
-        "canary_triggered_count": canary.triggered_count(),
-        "evolve": evolve.status(),
-        "evolve_feedback": evolve.feedback_status().ok()
-    }))
+async fn handle_health() -> Json<serde_json::Value> {
+    Json(json!({"status": "ok"}))
 }

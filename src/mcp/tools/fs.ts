@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SandboxBridge } from '../bridge.js';
+import { agentSafeError } from '../security/agent_error.js';
 
 export const FsReadSchema = z.object({
   path: z.string().describe('Relative path to file inside workspace (e.g. "reports/audit-report.sarif")'),
@@ -29,7 +30,7 @@ export function registerFsTools(server: any, bridge: SandboxBridge) {
       } catch (err: any) {
         return {
           isError: true,
-          content: [{ type: 'text', text: `Failed to read file: ${err.message}` }],
+          content: [{ type: 'text', text: `Failed to read file: ${agentSafeError(err, 'operation unavailable')}` }],
         };
       }
     }
@@ -53,7 +54,7 @@ export function registerFsTools(server: any, bridge: SandboxBridge) {
       } catch (err: any) {
         return {
           isError: true,
-          content: [{ type: 'text', text: `Failed to write file: ${err.message}` }],
+          content: [{ type: 'text', text: `Failed to write file: ${agentSafeError(err, 'operation unavailable')}` }],
         };
       }
     }

@@ -423,7 +423,11 @@ export class SandboxBridge {
     input: string,
     session: string = 'main'
   ): Promise<{ status: string; output: string }> {
-    return this.request('POST', '/execute_tmux', { session, input });
+    return this.request('POST', '/execute_tmux', {
+      session,
+      input,
+      evolve_session_id: this.activeEvolveSessionId,
+    });
   }
 
   public async startBackground(
@@ -446,7 +450,10 @@ export class SandboxBridge {
       is_active?: boolean;
       delta_logs?: string;
       log_diff?: string;
-    }>('GET', `/poll_logs?session=${encodeURIComponent(session)}`);
+    }>(
+      'GET',
+      `/poll_logs?session=${encodeURIComponent(session)}&evolve_session_id=${encodeURIComponent(this.activeEvolveSessionId)}`
+    );
 
     return {
       session: raw.session || session,
@@ -513,13 +520,13 @@ export class SandboxBridge {
       : undefined;
 
     if (runtimeState === 'ISOLATE' || session?.state === 'ISOLATE') {
-      throw new Error('Filesystem access is blocked while the sandbox is isolated');
+      throw new Error('Filesystem access is temporarily unavailable');
     }
     if (session?.state === 'DECEIVE') {
       return 'deception';
     }
     if (runtimeState === 'DECEIVE' && !session) {
-      throw new Error('Unable to prove filesystem surface for the active Evolve session');
+      throw new Error('Filesystem access is temporarily unavailable');
     }
     return 'real';
   }

@@ -1,14 +1,17 @@
 use axum::{http::StatusCode, Extension, Json};
 use serde_json::Value;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+use tokio::sync::Mutex;
 use tracing::{error, info};
 
 use crate::evolve_events::EvolveEventSink;
+use crate::surface_guard::{resolve_agent_surface, AgentSurface};
 use sandbox_kernel::browser_exec_identity;
-use sandbox_kernel::{EventSource, RiskLevel, SecurityEvent, SecurityEventType};
+use sandbox_kernel::{EventSource, EvolveManager, RiskLevel, SecurityEvent, SecurityEventType};
 
 const SAFE_CHILD_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const TOR_BROWSER_PROXY: &str = "socks5://127.0.0.1:9050";
@@ -107,8 +110,26 @@ fn proxy_is_managed_tor(config: &Value) -> bool {
 
 pub async fn handle_browser_audit(
     Extension(event_sink): Extension<EvolveEventSink>,
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
     Json(config): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let surface = {
+        let manager = evolve_mgr.lock().await;
+        resolve_agent_surface(&manager, evolve_session_id(&config))
+    }
+    .map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "browser service temporarily unavailable"})),
+        )
+    })?;
+    if surface == AgentSurface::Deception {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "browser service temporarily unavailable"})),
+        ));
+    }
+
     if !has_scope_hosts(&config) {
         emit_browser_policy_violation(
             &event_sink,

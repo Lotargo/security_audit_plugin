@@ -43,11 +43,18 @@ describe('SandboxBridge Evolve correlation', () => {
     await bridge.startBackground('printf TEST', 'evolve_bg');
     await bridge.browserAudit({ url: 'https://203.0.113.7/path' });
     await bridge.httpProbe({ url: 'https://203.0.113.7/api' });
+    await bridge.interactiveInput('y', 'evolve_tmux');
+    await bridge.pollLogs('evolve_bg');
 
     expect(bodyFor(request, '/execute').evolve_session_id).toBe(sessionId);
     expect(bodyFor(request, '/start_background').evolve_session_id).toBe(sessionId);
     expect(bodyFor(request, '/browser_audit').evolve_session_id).toBe(sessionId);
     expect(bodyFor(request, '/http_probe').evolve_session_id).toBe(sessionId);
+    expect(bodyFor(request, '/execute_tmux').evolve_session_id).toBe(sessionId);
+    expect(request).toHaveBeenCalledWith(
+      'GET',
+      `/poll_logs?session=evolve_bg&evolve_session_id=${encodeURIComponent(String(sessionId))}`
+    );
   });
 
   it('rotates the behavioral session when a new scope is provisioned', async () => {

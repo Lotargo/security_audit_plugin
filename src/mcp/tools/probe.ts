@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SandboxBridge } from '../bridge.js';
+import { agentSafeError } from '../security/agent_error.js';
 
 export const HttpProbeSchema = z.object({
   url: z.string().url().describe('In-scope HTTP/HTTPS URL'),
@@ -35,7 +36,7 @@ export function registerProbeTool(server: any, bridge: SandboxBridge) {
       } catch (err: any) {
         return {
           isError: true,
-          content: [{ type: 'text', text: `HTTP probe failed: ${err.message}` }],
+          content: [{ type: 'text', text: `HTTP probe failed: ${agentSafeError(err, 'operation unavailable')}` }],
         };
       }
     }

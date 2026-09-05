@@ -6,9 +6,10 @@ use tokio::sync::Mutex;
 use tracing::info;
 
 use crate::evolve_events::EvolveEventSink;
+use crate::surface_guard::{resolve_agent_surface, AgentSurface};
 use sandbox_kernel::tmux::TmuxManager;
 use sandbox_kernel::{
-    EventSource, EvolveManager, EvolveState, RiskLevel, SecurityEvent, SecurityEventType,
+    EventSource, EvolveManager, RiskLevel, SecurityEvent, SecurityEventType,
 };
 
 #[derive(Debug, Deserialize)]
@@ -22,6 +23,7 @@ pub struct StartBackgroundRequest {
 pub struct PollLogsQuery {
     pub session: Option<String>,
     pub last_lines: Option<usize>,
+    pub evolve_session_id: Option<String>,
 }
 
 fn emit_background_event(
@@ -62,16 +64,22 @@ pub async fn handle_start_background(
         .evolve_session_id
         .unwrap_or_else(|| session.clone());
 
-    {
+    let surface = {
         let manager = evolve_mgr.lock().await;
-        if manager.session_state(&event_session_id) == Some(EvolveState::Deceive) {
-            return Err((
-                StatusCode::CONFLICT,
-                Json(json!({
-                    "error": "background execution is blocked on a deceived session until shadow background jobs are implemented"
-                })),
-            ));
-        }
+        resolve_agent_surface(&manager, Some(&event_session_id))
+    }
+    .map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "background execution temporarily unavailable"})),
+        )
+    })?;
+
+    if surface == AgentSurface::Deception {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "background execution temporarily unavailable"})),
+        ));
     }
 
     info!(
@@ -111,8 +119,26 @@ pub async fn handle_start_background(
 }
 
 pub async fn handle_poll_logs(
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
     Query(query): Query<PollLogsQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let surface = {
+        let manager = evolve_mgr.lock().await;
+        resolve_agent_surface(&manager, query.evolve_session_id.as_deref())
+    }
+    .map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "background logs temporarily unavailable"})),
+        )
+    })?;
+    if surface == AgentSurface::Deception {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "background logs temporarily unavailable"})),
+        ));
+    }
+
     let session = query.session.unwrap_or_else(|| "audit_session".to_string());
     let last_lines = query.last_lines.unwrap_or(0);
 

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SandboxBridge } from '../bridge.js';
+import { agentSafeError } from '../security/agent_error.js';
 
 export const ExecSchema = z.object({
   command: z.string().describe('Shell command to execute inside the sandbox container'),
@@ -35,7 +36,7 @@ export function registerExecTools(server: any, bridge: SandboxBridge) {
       } catch (err: any) {
         return {
           isError: true,
-          content: [{ type: 'text', text: `Execution failed: ${err.message}` }],
+          content: [{ type: 'text', text: `Execution failed: ${agentSafeError(err, 'operation unavailable')}` }],
         };
       }
     }
@@ -54,7 +55,7 @@ export function registerExecTools(server: any, bridge: SandboxBridge) {
       } catch (err: any) {
         return {
           isError: true,
-          content: [{ type: 'text', text: `Interactive input failed: ${err.message}` }],
+          content: [{ type: 'text', text: `Interactive input failed: ${agentSafeError(err, 'operation unavailable')}` }],
         };
       }
     }

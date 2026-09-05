@@ -68,6 +68,17 @@ describeDocker('final Docker security hardening regressions', () => {
     expect(output).not.toContain('HOST_PUBKEY_HEX=');
   });
 
+  it('keeps public health minimal and blocks raw agent access to the management port', async () => {
+    const health = await bridge.request<Record<string, unknown>>('GET', '/health');
+    expect(health).toEqual({ status: 'ok' });
+
+    await bridge.setScope({ mode: 'local', arm_canaries: false });
+    const management = await bridge.exec(
+      'curl -fsS --connect-timeout 1 --max-time 2 http://127.0.0.1:9999/health'
+    );
+    expect(management.exit_code).not.toBe(0);
+  });
+
   it('blocks raw agent access to the container DNS service even in remote mode', async () => {
     await bridge.setScope({
       mode: 'remote',

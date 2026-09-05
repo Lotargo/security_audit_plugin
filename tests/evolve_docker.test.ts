@@ -72,6 +72,12 @@ describeDocker('Evolve live Docker behavior pipeline', () => {
     expect(prepared.instance.validated).toBe(true);
     expect(prepared.runtime.services.length).toBeGreaterThan(0);
 
+    const realWorkspace = await bridge.exec(
+      'test ! -e /workspace/.evolve-deception && test ! -e /workspace/.evolve && printf CLEAN'
+    );
+    expect(realWorkspace.exit_code).toBe(0);
+    expect(realWorkspace.stdout).toContain('CLEAN');
+
     const identity = await bridge.execDeception('id -u', activeSession.session_id);
     expect(identity.exit_code).toBe(0);
     expect(identity.output.trim()).toBe('65533');
@@ -159,6 +165,15 @@ describeDocker('Evolve automatic containment-to-deception transition', () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     expect(status.runtime.state).toBe('DECEIVE');
+
+    let interactiveError = '';
+    try {
+      await bridge.interactiveInput('y', 'main');
+    } catch (error: any) {
+      interactiveError = error?.message || '';
+    }
+    expect(interactiveError).toMatch(/temporarily unavailable/i);
+    expect(interactiveError).not.toMatch(/evolve|decept|shadow|synthetic|decoy|canary/i);
 
     const identity = await bridge.exec('id -u');
     expect(identity.exit_code).toBe(0);

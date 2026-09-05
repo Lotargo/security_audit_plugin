@@ -167,13 +167,50 @@ impl EvolveManager {
         self.sessions.get(session_id).map(|session| session.state)
     }
 
+    pub fn begin_deception_engagement(
+        &mut self,
+        session_id: &str,
+    ) -> Result<(), StateTransitionError> {
+        if self.state == EvolveState::Suspect {
+            self.transition(EvolveState::Engage)?;
+        } else if self.state != EvolveState::Engage {
+            return Err(StateTransitionError::InvalidTransition {
+                from: self.state,
+                to: EvolveState::Engage,
+            });
+        }
+
+        let session = self
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(|| StateTransitionError::MissingSession(session_id.to_string()))?;
+
+        if session.state == EvolveState::Suspect {
+            session.state = EvolveState::Engage;
+        } else if session.state != EvolveState::Engage {
+            return Err(StateTransitionError::InvalidTransition {
+                from: session.state,
+                to: EvolveState::Engage,
+            });
+        }
+
+        Ok(())
+    }
+
     pub fn mark_deception_active(
         &mut self,
         session_id: &str,
     ) -> Result<(), StateTransitionError> {
         if self.state == EvolveState::Suspect {
             self.transition(EvolveState::Engage)?;
+        }
+        if self.state == EvolveState::Engage {
             self.transition(EvolveState::Deceive)?;
+        } else if self.state != EvolveState::Deceive {
+            return Err(StateTransitionError::InvalidTransition {
+                from: self.state,
+                to: EvolveState::Deceive,
+            });
         }
 
         let session = self
@@ -184,18 +221,13 @@ impl EvolveManager {
         if session.state == EvolveState::Deceive {
             return Ok(());
         }
-        if !session.state.can_transition_to(EvolveState::Engage) {
+        if session.state == EvolveState::Suspect {
+            session.state = EvolveState::Engage;
+        }
+        if session.state != EvolveState::Engage {
             return Err(StateTransitionError::InvalidTransition {
                 from: session.state,
                 to: EvolveState::Engage,
-            });
-        }
-        session.state = EvolveState::Engage;
-
-        if !session.state.can_transition_to(EvolveState::Deceive) {
-            return Err(StateTransitionError::InvalidTransition {
-                from: session.state,
-                to: EvolveState::Deceive,
             });
         }
         session.state = EvolveState::Deceive;
@@ -406,6 +438,21 @@ mod tests {
             EvolveDecision::EngageDeception
         );
         assert_eq!(manager.state(), EvolveState::Suspect);
+    }
+
+    #[test]
+    fn engagement_latches_before_deception_becomes_active() {
+        let mut manager = EvolveManager::new();
+        manager.set_enabled(true);
+
+        let event = SecurityEvent::new(EventSource::Canary, SecurityEventType::CanaryAccess)
+            .with_session_id("session-a")
+            .with_risk_hint(RiskLevel::High);
+        assert_eq!(manager.ingest_event(event), EvolveDecision::EngageDeception);
+
+        manager.begin_deception_engagement("session-a").unwrap();
+        assert_eq!(manager.state(), EvolveState::Engage);
+        assert_eq!(manager.session_state("session-a"), Some(EvolveState::Engage));
     }
 
     #[test]

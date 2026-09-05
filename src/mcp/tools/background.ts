@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SandboxBridge } from '../bridge.js';
+import { agentSafeError } from '../security/agent_error.js';
 
 export const StartBackgroundSchema = z.object({
   command: z.string().describe('Long-running shell command (e.g. nmap, nikto, dirb, ffuf)'),
@@ -32,7 +33,7 @@ export function registerBackgroundTools(server: any, bridge: SandboxBridge) {
       } catch (err: any) {
         return {
           isError: true,
-          content: [{ type: 'text', text: `Failed to start background job: ${err.message}` }],
+          content: [{ type: 'text', text: `Failed to start background job: ${agentSafeError(err, 'operation unavailable')}` }],
         };
       }
     }
@@ -51,7 +52,7 @@ export function registerBackgroundTools(server: any, bridge: SandboxBridge) {
       } catch (err: any) {
         return {
           isError: true,
-          content: [{ type: 'text', text: `Failed to poll background logs: ${err.message}` }],
+          content: [{ type: 'text', text: `Failed to poll background logs: ${agentSafeError(err, 'operation unavailable')}` }],
         };
       }
     }

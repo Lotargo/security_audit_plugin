@@ -4,11 +4,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::io::{Error as IoError, ErrorKind};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 use tracing::{error, info};
 
 use crate::evolve_events::EvolveEventSink;
-use sandbox_kernel::{EventSource, RiskLevel, SecurityEvent, SecurityEventType};
+use crate::surface_guard::{resolve_agent_surface, AgentSurface};
+use sandbox_kernel::{EventSource, EvolveManager, RiskLevel, SecurityEvent, SecurityEventType};
 
 const TOR_BROWSER_PROXY: &str = "socks5://127.0.0.1:9050";
 const TOR_HTTP_PROXY: &str = "socks5h://127.0.0.1:9050";
@@ -121,8 +124,26 @@ fn proxy_is_managed_tor(proxy: &str) -> bool {
 
 pub async fn handle_http_probe(
     Extension(event_sink): Extension<EvolveEventSink>,
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
     Json(payload): Json<ProbeRequest>,
 ) -> Result<Json<ProbeResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let surface = {
+        let manager = evolve_mgr.lock().await;
+        resolve_agent_surface(&manager, payload.evolve_session_id.as_deref())
+    }
+    .map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "HTTP service temporarily unavailable"})),
+        )
+    })?;
+    if surface == AgentSurface::Deception {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "HTTP service temporarily unavailable"})),
+        ));
+    }
+
     let method_str = payload.method.as_deref().unwrap_or("GET").to_uppercase();
     let timeout_duration = Duration::from_secs(payload.timeout_secs.unwrap_or(15));
     let allowed_hosts = normalize_allowed_hosts(payload.allowed_hosts.clone());

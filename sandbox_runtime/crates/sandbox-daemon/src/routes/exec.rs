@@ -14,12 +14,13 @@ use tracing::{error, info, warn};
 use crate::deception_exec;
 use crate::deception_runtime::DeceptionRuntime;
 use crate::evolve_events::EvolveEventSink;
+use crate::surface_guard::{resolve_agent_surface, AgentSurface};
 #[cfg(not(target_os = "windows"))]
 use sandbox_kernel::audit_exec_identity;
 use sandbox_kernel::tmux::TmuxManager;
 use sandbox_kernel::watchdog::{process_command_output, WatchdogResult};
 use sandbox_kernel::{
-    EventSource, EvolveManager, EvolveState, RiskLevel, SecurityEvent, SecurityEventType,
+    EventSource, EvolveManager, RiskLevel, SecurityEvent, SecurityEventType,
 };
 
 const SAFE_CHILD_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -45,6 +46,7 @@ pub struct ExecResponse {
 pub struct InteractiveTmuxRequest {
     pub session: Option<String>,
     pub input: String,
+    pub evolve_session_id: Option<String>,
 }
 
 fn emit_exec_event(
@@ -95,90 +97,104 @@ pub async fn handle_execute(
             .as_millis()
     );
 
-    if let Some(session_id) = evolve_session_id.as_deref() {
+    let surface = {
+        let manager = evolve_mgr.lock().await;
+        resolve_agent_surface(&manager, evolve_session_id.as_deref())
+    }
+    .map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "execution service temporarily unavailable"})),
+        )
+    })?;
+
+    if surface == AgentSurface::Deception {
+        let session_id = evolve_session_id
+            .as_deref()
+            .expect("surface guard requires a bound session for the alternate surface");
         let deception_instance = {
             let manager = evolve_mgr.lock().await;
-            if manager.session_state(session_id) == Some(EvolveState::Deceive) {
-                manager.deception_instance(session_id)
-            } else {
-                None
-            }
+            manager.deception_instance(session_id)
         };
 
-        if let Some(instance) = deception_instance {
-            let runtime_ready = {
-                let runtime = deception_runtime.lock().await;
-                runtime.status(session_id).is_some()
-            };
-            if !runtime_ready {
-                return Err((
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(json!({"error": "deception session is active but shadow services are unavailable"})),
-                ));
-            }
+        let Some(instance) = deception_instance else {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": "execution service temporarily unavailable"})),
+            ));
+        };
 
-            emit_exec_event(
-                &event_sink,
-                Some(session_id),
-                SecurityEventType::ProcessSpawn,
-                &command_text,
-                "/workspace",
-                Some("deception_requested".to_string()),
-                None,
-                json!({
-                    "execution_mode": "sync",
-                    "execution_surface": "deception",
-                    "timeout_secs": timeout_secs,
-                    "command_id": cmd_id
-                }),
-            );
-
-            let result = deception_exec::execute(&instance, &command_text, timeout_secs)
-                .await
-                .map_err(|error| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({"error": format!("Deception execution failed: {}", error)})),
-                    )
-                })?;
-
-            let log_dir = PathBuf::from("/workspace").join("logs");
-            let watchdog_res = process_command_output(&cmd_id, &result.output, &log_dir)
-                .await
-                .unwrap_or_else(|_| WatchdogResult {
-                    output: result.output.clone(),
-                    is_truncated: false,
-                    total_chars: result.output.len(),
-                    log_file_path: None,
-                });
-
-            emit_exec_event(
-                &event_sink,
-                Some(session_id),
-                SecurityEventType::ProcessExit,
-                &command_text,
-                "/workspace",
-                Some(format!("exit_code={}", result.exit_code)),
-                None,
-                json!({
-                    "execution_mode": "sync",
-                    "execution_surface": "deception",
-                    "command_id": cmd_id,
-                    "is_truncated": watchdog_res.is_truncated,
-                    "total_chars": watchdog_res.total_chars
-                }),
-            );
-
-            return Ok(Json(ExecResponse {
-                output: watchdog_res.output,
-                exit_code: result.exit_code,
-                is_truncated: watchdog_res.is_truncated,
-                total_chars: watchdog_res.total_chars,
-                // Defender-side logs remain outside the deceptive mount and are intentionally
-                // not disclosed into the synthetic session.
-                log_file_path: None,
-            }));
+        let runtime_ready = {
+            let runtime = deception_runtime.lock().await;
+            runtime.status(session_id).is_some()
+        };
+        if !runtime_ready {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": "execution service temporarily unavailable"})),
+            ));
         }
+
+        emit_exec_event(
+            &event_sink,
+            Some(session_id),
+            SecurityEventType::ProcessSpawn,
+            &command_text,
+            "/workspace",
+            Some("alternate_surface_requested".to_string()),
+            None,
+            json!({
+                "execution_mode": "sync",
+                "execution_surface": "alternate",
+                "timeout_secs": timeout_secs,
+                "command_id": cmd_id
+            }),
+        );
+
+        let result = deception_exec::execute(&instance, &command_text, timeout_secs)
+            .await
+            .map_err(|error| {
+                error!(session_id = %session_id, error = %error, "Alternate execution failed");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "execution failed"})),
+                )
+            })?;
+
+        let log_dir = PathBuf::from("/workspace").join("logs");
+        let watchdog_res = process_command_output(&cmd_id, &result.output, &log_dir)
+            .await
+            .unwrap_or_else(|_| WatchdogResult {
+                output: result.output.clone(),
+                is_truncated: false,
+                total_chars: result.output.len(),
+                log_file_path: None,
+            });
+
+        emit_exec_event(
+            &event_sink,
+            Some(session_id),
+            SecurityEventType::ProcessExit,
+            &command_text,
+            "/workspace",
+            Some(format!("exit_code={}", result.exit_code)),
+            None,
+            json!({
+                "execution_mode": "sync",
+                "execution_surface": "alternate",
+                "command_id": cmd_id,
+                "is_truncated": watchdog_res.is_truncated,
+                "total_chars": watchdog_res.total_chars
+            }),
+        );
+
+        return Ok(Json(ExecResponse {
+            output: watchdog_res.output,
+            exit_code: result.exit_code,
+            is_truncated: watchdog_res.is_truncated,
+            total_chars: watchdog_res.total_chars,
+            log_file_path: None,
+        }));
     }
 
     emit_exec_event(
@@ -355,10 +371,21 @@ pub async fn handle_interactive_tmux(
         .session
         .unwrap_or_else(|| "audit_session".to_string());
 
-    if evolve_mgr.lock().await.state() == EvolveState::Deceive {
+    let surface = {
+        let manager = evolve_mgr.lock().await;
+        resolve_agent_surface(&manager, payload.evolve_session_id.as_deref())
+    }
+    .map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "interactive session temporarily unavailable"})),
+        )
+    })?;
+
+    if surface == AgentSurface::Deception {
         return Err((
-            StatusCode::CONFLICT,
-            Json(json!({"error": "interactive tmux is disabled while Evolve deception is active"})),
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "interactive session temporarily unavailable"})),
         ));
     }
 

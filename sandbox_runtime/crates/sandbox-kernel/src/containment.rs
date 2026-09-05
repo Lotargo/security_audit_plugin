@@ -41,7 +41,7 @@ fn planned_rules(
             DECEPTION_EXEC_UID.to_string(),
             "tcp".into(),
             "dport".into(),
-            management_port,
+            management_port.clone(),
             "reject".into(),
         ],
         vec![
@@ -108,6 +108,15 @@ fn planned_rules(
             "meta".into(),
             "skuid".into(),
             DECEPTION_EXEC_UID.to_string(),
+            "reject".into(),
+        ],
+        vec![
+            "meta".into(),
+            "skuid".into(),
+            audit_uid.to_string(),
+            "tcp".into(),
+            "dport".into(),
+            management_port,
             "reject".into(),
         ],
         vec![
@@ -346,6 +355,9 @@ mod tests {
         assert!(rendered
             .iter()
             .any(|rule| rule == &format!("meta skuid {DECEPTION_EXEC_UID} reject")));
+        assert!(rendered
+            .iter()
+            .any(|rule| rule == "meta skuid 1001 tcp dport 9999 reject"));
         assert!(rendered
             .iter()
             .any(|rule| rule == "meta skuid 1001 tcp dport 9050 reject"));

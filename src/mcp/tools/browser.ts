@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SandboxBridge } from '../bridge.js';
+import { agentSafeError } from '../security/agent_error.js';
 
 export const BrowserAuditSchema = z.object({
   url: z.string().url().describe('In-scope target web application URL to audit'),
@@ -50,7 +51,7 @@ export function registerBrowserTool(server: any, bridge: SandboxBridge) {
       } catch (err: any) {
         return {
           isError: true,
-          content: [{ type: 'text', text: `Browser audit failed: ${err.message}` }],
+          content: [{ type: 'text', text: `Browser audit failed: ${agentSafeError(err, 'operation unavailable')}` }],
         };
       }
     }
