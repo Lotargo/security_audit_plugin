@@ -194,6 +194,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             post(routes::evolve::handle_set_enabled),
         )
         .route("/evolve/status", get(routes::evolve::handle_status))
+        .route("/evolve/sessions", get(routes::evolve::handle_sessions))
+        .route("/evolve/trace", get(routes::evolve::handle_trace))
         .route("/evolve/events", get(routes::evolve::handle_events))
         .route("/http_probe", post(routes::probe::handle_http_probe))
         .route(
