@@ -78,8 +78,10 @@ RUN npm install --omit=dev --no-audit --no-fund
 COPY stealth/*.js stealth/waf_profiles.json ./
 
 COPY --from=builder /usr/src/app/target/release/sandbox-daemon /usr/local/bin/sandbox-daemon
-COPY --from=builder /usr/src/app/target/release/deception-service /usr/local/bin/deception-service
-RUN chmod +x /usr/local/bin/sandbox-daemon /usr/local/bin/deception-service
+RUN mkdir -p /opt/evolve-private
+COPY --from=builder /usr/src/app/target/release/deception-service /opt/evolve-private/deception-service
+RUN chmod +x /usr/local/bin/sandbox-daemon /opt/evolve-private/deception-service \
+    && chmod 0755 /opt/evolve-private
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh

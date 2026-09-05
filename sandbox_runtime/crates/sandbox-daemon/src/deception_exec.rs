@@ -1,6 +1,6 @@
+use crate::deception_sandbox;
 use sandbox_kernel::{DeceptionInstance, DECEPTION_EXEC_GID, DECEPTION_EXEC_UID};
 use serde::Serialize;
-use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 use thiserror::Error;
@@ -46,56 +46,8 @@ pub async fn execute(
     }
 
     let timeout_secs = timeout_secs.clamp(1, MAX_TIMEOUT_SECS);
-    let mut process = Command::new("/usr/bin/bwrap");
+    let mut process = deception_sandbox::command(&instance.root, false)?;
     process
-        .arg("--die-with-parent")
-        .arg("--new-session")
-        .arg("--unshare-pid")
-        .arg("--unshare-ipc")
-        .arg("--unshare-uts")
-        .arg("--hostname")
-        .arg("prod-app-01")
-        .arg("--ro-bind")
-        .arg("/usr")
-        .arg("/usr");
-
-    add_optional_ro_bind(&mut process, "/bin");
-    add_optional_ro_bind(&mut process, "/lib");
-    add_optional_ro_bind(&mut process, "/lib64");
-
-    process
-        .arg("--proc")
-        .arg("/proc")
-        .arg("--dev")
-        .arg("/dev")
-        .arg("--tmpfs")
-        .arg("/tmp")
-        .arg("--dir")
-        .arg("/etc")
-        .arg("--dir")
-        .arg("/etc/ssl");
-
-    if Path::new("/etc/ssl/certs").is_dir() {
-        process
-            .arg("--ro-bind")
-            .arg("/etc/ssl/certs")
-            .arg("/etc/ssl/certs");
-    }
-
-    for file in ["hosts", "hostname", "nsswitch.conf", "passwd", "group"] {
-        let source = instance.root.join("etc").join(file);
-        process
-            .arg("--ro-bind")
-            .arg(source)
-            .arg(format!("/etc/{file}"));
-    }
-
-    process
-        .arg("--bind")
-        .arg(&instance.root)
-        .arg("/workspace")
-        .arg("--chdir")
-        .arg("/workspace")
         .arg("--")
         .arg("/usr/bin/prlimit")
         .arg("--nproc=128")
@@ -114,11 +66,7 @@ pub async fn execute(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .env_clear()
-        .env("HOME", "/workspace/home")
-        .env("PATH", "/usr/bin:/bin")
-        .env("LANG", "C.UTF-8");
+        .kill_on_drop(true);
 
     let child = process.spawn()?;
     let output = match timeout(Duration::from_secs(timeout_secs), child.wait_with_output()).await {
@@ -143,8 +91,3 @@ pub async fn execute(
     })
 }
 
-fn add_optional_ro_bind(process: &mut Command, source: &str) {
-    if Path::new(source).exists() {
-        process.arg("--ro-bind").arg(source).arg(source);
-    }
-}

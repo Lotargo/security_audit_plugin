@@ -1,14 +1,12 @@
-use sandbox_kernel::{
-    deception_exec_identity, DeceptionInstance, DeceptionService,
-};
+use crate::deception_sandbox;
+use sandbox_kernel::{deception_exec_identity, DeceptionInstance, DeceptionService};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::process::Stdio;
 use thiserror::Error;
 use tokio::process::{Child, Command};
 
-const SAFE_CHILD_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-const SERVICE_BINARY: &str = "/usr/local/bin/deception-service";
+const SERVICE_BINARY: &str = "/opt/evolve-private/deception-service";
 
 #[derive(Error, Debug)]
 pub enum DeceptionRuntimeError {
@@ -27,6 +25,7 @@ pub enum DeceptionRuntimeError {
 #[derive(Debug, Clone, Serialize)]
 pub struct RunningServiceStatus {
     pub name: String,
+    pub hostname: String,
     pub bind_host: String,
     pub port: u16,
     pub protocol: String,
@@ -78,8 +77,11 @@ impl DeceptionRuntime {
         let mut started = Vec::new();
 
         for service in &instance.planned_services {
-            let mut command = Command::new("/usr/bin/setpriv");
+            let mut command = deception_sandbox::command(&instance.root, true)
+                .map_err(|error| DeceptionRuntimeError::SpawnFailed(service.name.clone(), error))?;
             command
+                .arg("--")
+                .arg("/usr/bin/setpriv")
                 .arg(format!("--reuid={uid}"))
                 .arg(format!("--regid={gid}"))
                 .arg("--clear-groups")
@@ -94,19 +96,12 @@ impl DeceptionRuntime {
                 .arg(&service.protocol)
                 .arg("--service")
                 .arg(&service.name)
-                .arg("--profile")
-                .arg(instance.profile.id())
-                .arg("--session")
-                .arg(&instance.session_id)
+                .arg("--hostname")
+                .arg(&service.hostname)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .kill_on_drop(true)
-                .env_clear()
-                .env("HOME", "/tmp")
-                .env("PATH", SAFE_CHILD_PATH)
-                .env("LANG", "C.UTF-8")
-                .current_dir("/tmp");
+                .kill_on_drop(true);
 
             let child = command.spawn().map_err(|error| {
                 DeceptionRuntimeError::SpawnFailed(service.name.clone(), error)
@@ -149,6 +144,7 @@ impl DeceptionRuntime {
                 .iter()
                 .map(|running| RunningServiceStatus {
                     name: running.descriptor.name.clone(),
+                    hostname: running.descriptor.hostname.clone(),
                     bind_host: running.descriptor.bind_host.clone(),
                     port: running.descriptor.port,
                     protocol: running.descriptor.protocol.clone(),

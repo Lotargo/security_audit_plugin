@@ -13,8 +13,7 @@ struct ServiceConfig {
     port: u16,
     protocol: String,
     service: String,
-    _profile: String,
-    _session: String,
+    hostname: String,
 }
 
 #[tokio::main]
@@ -50,8 +49,7 @@ fn parse_args() -> Result<ServiceConfig, Box<dyn std::error::Error>> {
     let mut port = None;
     let mut protocol = None;
     let mut service = None;
-    let mut profile = None;
-    let mut session = None;
+    let mut hostname = None;
     let mut args = std::env::args().skip(1);
 
     while let Some(arg) = args.next() {
@@ -63,8 +61,7 @@ fn parse_args() -> Result<ServiceConfig, Box<dyn std::error::Error>> {
             "--port" => port = Some(value.parse::<u16>()?),
             "--protocol" => protocol = Some(value),
             "--service" => service = Some(value),
-            "--profile" => profile = Some(value),
-            "--session" => session = Some(value),
+            "--hostname" => hostname = Some(value),
             _ => {
                 return Err(IoError::new(
                     ErrorKind::InvalidInput,
@@ -82,10 +79,8 @@ fn parse_args() -> Result<ServiceConfig, Box<dyn std::error::Error>> {
             .ok_or_else(|| IoError::new(ErrorKind::InvalidInput, "missing --protocol"))?,
         service: service
             .ok_or_else(|| IoError::new(ErrorKind::InvalidInput, "missing --service"))?,
-        _profile: profile
-            .ok_or_else(|| IoError::new(ErrorKind::InvalidInput, "missing --profile"))?,
-        _session: session
-            .ok_or_else(|| IoError::new(ErrorKind::InvalidInput, "missing --session"))?,
+        hostname: hostname
+            .ok_or_else(|| IoError::new(ErrorKind::InvalidInput, "missing --hostname"))?,
     })
 }
 
@@ -119,7 +114,7 @@ async fn handle_http(
         "status": "ok",
         "environment": "production",
         "service": config.service,
-        "node": format!("{}.internal", config.service),
+        "node": config.hostname,
         "region": "eu-central-1"
     });
     let body = serde_json::to_vec(&payload).unwrap_or_else(|_| b"{\"status\":\"ok\"}".to_vec());

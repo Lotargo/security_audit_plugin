@@ -16,6 +16,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod auth;
 mod deception_exec;
 mod deception_runtime;
+mod deception_sandbox;
 mod evolve_events;
 mod routes;
 

@@ -280,7 +280,9 @@ Canary больше не должен напрямую вызывать KillSwit
 - выполнение shell-команд после `setpriv` до UID/GID 65533;
 - resource limits через `prlimit`;
 - deception UID network access ограничен только TCP shadow range `18000-18999` на loopback;
-- live regression проверяет отсутствие доступа к daemon management port и внешнему egress.
+- live regression проверяет отсутствие доступа к daemon management port и внешнему egress;
+- synthetic services теперь также запускаются внутри отдельного bubblewrap filesystem/PID/UTS sandbox;
+- trusted `/usr/local` маскируется внутри deception namespace, чтобы sandbox binaries не раскрывали механизм обмана.
 
 Автоматический redirect `HIGH -> ENGAGE -> DECEIVE` пока не включён. До появления безопасного redirect boundary HIGH/CRITICAL продолжают fail-closed через KillSwitch.
 
