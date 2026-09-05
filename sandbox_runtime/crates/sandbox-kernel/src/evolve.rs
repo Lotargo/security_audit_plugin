@@ -75,6 +75,7 @@ struct EvolveState {
     event_log: Option<PathBuf>,
     profile_path: Option<PathBuf>,
     next_event_id: u64,
+    watcher_started: bool,
 }
 
 impl Default for EvolveState {
@@ -90,6 +91,7 @@ impl Default for EvolveState {
             event_log: None,
             profile_path: None,
             next_event_id: 1,
+            watcher_started: false,
         }
     }
 }
@@ -141,7 +143,7 @@ impl EvolveManager {
 
         self.materialize_decoy_surface(&decoy_root)?;
 
-        {
+        let should_start_watcher = {
             let mut state = self.inner.lock().map_err(|_| EvolveError::StatePoisoned)?;
             state.phase = EvolvePhase::Armed;
             state.generation = persisted.generation;
@@ -153,10 +155,15 @@ impl EvolveManager {
             state.event_log = Some(event_log);
             state.profile_path = Some(profile_path);
             state.next_event_id = state.observation_count.saturating_add(1);
-        }
+            let should_start = !state.watcher_started;
+            state.watcher_started = true;
+            should_start
+        };
 
         self.persist_profile()?;
-        self.spawn_decoy_watcher(decoy_root);
+        if should_start_watcher {
+            self.spawn_decoy_watcher(decoy_root);
+        }
         info!("Evolve adaptive deception layer armed.");
         self.status()
     }
