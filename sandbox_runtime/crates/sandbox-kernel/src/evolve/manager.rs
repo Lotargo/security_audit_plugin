@@ -1,5 +1,6 @@
 use super::{
-    EvolveSession, EvolveState, RiskLevel, SecurityEvent, StateTransitionError,
+    BehaviorProfiler, BehaviorTrace, EvolveSession, EvolveState, RiskLevel, SecurityEvent,
+    StateTransitionError,
 };
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
@@ -22,6 +23,7 @@ pub struct EvolveStatus {
     pub state: EvolveState,
     pub events_buffered: usize,
     pub sessions: usize,
+    pub behavior_traces: usize,
 }
 
 pub struct EvolveManager {
@@ -29,6 +31,7 @@ pub struct EvolveManager {
     state: EvolveState,
     events: VecDeque<SecurityEvent>,
     sessions: HashMap<String, EvolveSession>,
+    behavior: BehaviorProfiler,
     event_capacity: usize,
 }
 
@@ -51,6 +54,7 @@ impl EvolveManager {
             state: EvolveState::Observe,
             events: VecDeque::with_capacity(DEFAULT_EVENT_CAPACITY),
             sessions,
+            behavior: BehaviorProfiler::new(),
             event_capacity: DEFAULT_EVENT_CAPACITY,
         }
     }
@@ -73,7 +77,18 @@ impl EvolveManager {
             state: self.state,
             events_buffered: self.events.len(),
             sessions: self.sessions.len(),
+            behavior_traces: self.behavior.traces().len(),
         }
+    }
+
+    pub fn sessions(&self) -> Vec<EvolveSession> {
+        let mut sessions: Vec<_> = self.sessions.values().cloned().collect();
+        sessions.sort_by(|left, right| left.created_at_ms.cmp(&right.created_at_ms));
+        sessions
+    }
+
+    pub fn behavior_trace(&self, session_id: &str) -> Option<BehaviorTrace> {
+        self.behavior.trace(session_id).cloned()
     }
 
     pub fn recent_events(&self, limit: usize) -> Vec<SecurityEvent> {
@@ -118,13 +133,16 @@ impl EvolveManager {
             .unwrap_or_else(|| DEFAULT_SESSION_ID.to_string());
         event.session_id = Some(session_id.clone());
 
+        let assessment = self.behavior.observe(&event);
+        event.risk_hint = Some(assessment.risk_level);
+
         let session = self
             .sessions
             .entry(session_id.clone())
-            .or_insert_with(|| EvolveSession::new(session_id));
+            .or_insert_with(|| EvolveSession::new(session_id.clone()));
         session.record_event(&event);
 
-        let risk = event.risk_hint.unwrap_or(RiskLevel::Low);
+        let risk = assessment.risk_level;
         let event_type = event.event_type;
         self.push_event(event);
 
@@ -226,6 +244,34 @@ mod tests {
 
         assert_eq!(manager.ingest_event(event), EvolveDecision::Isolate);
         assert_eq!(manager.state(), EvolveState::Suspect);
+    }
+
+    #[test]
+    fn behavior_sequence_can_raise_manager_risk() {
+        let mut manager = EvolveManager::new();
+        manager.set_enabled(true);
+
+        let discovery =
+            SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
+                .with_session_id("session-a")
+                .with_command("whoami");
+        let network =
+            SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
+                .with_session_id("session-a")
+                .with_command("curl https://example.com");
+
+        assert_eq!(manager.ingest_event(discovery), EvolveDecision::Observe);
+        assert_eq!(
+            manager.ingest_event(network),
+            EvolveDecision::EnhancedTelemetry
+        );
+        assert_eq!(manager.state(), EvolveState::Suspect);
+
+        let trace = manager
+            .behavior_trace("session-a")
+            .expect("behavior trace should exist");
+        assert_eq!(trace.events.len(), 2);
+        assert_eq!(trace.risk_level, RiskLevel::Medium);
     }
 
     #[test]
