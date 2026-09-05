@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
@@ -29,6 +29,7 @@ pub struct CanaryManager {
     traps: Vec<CanaryTrap>,
     is_armed: Arc<AtomicBool>,
     triggered_count: Arc<AtomicUsize>,
+    watch_generation: Arc<AtomicU64>,
     event_sender: Option<UnboundedSender<SecurityEvent>>,
 }
 
@@ -44,6 +45,7 @@ impl CanaryManager {
             traps: Vec::new(),
             is_armed: Arc::new(AtomicBool::new(false)),
             triggered_count: Arc::new(AtomicUsize::new(0)),
+            watch_generation: Arc::new(AtomicU64::new(0)),
             event_sender: None,
         }
     }
@@ -166,16 +168,23 @@ users:
 
         self.traps = planted.clone();
         self.is_armed.store(true, Ordering::SeqCst);
+        let generation = self.watch_generation.fetch_add(1, Ordering::SeqCst) + 1;
 
-        self.spawn_watcher(planted.clone(), session_id);
+        self.spawn_watcher(planted.clone(), session_id, generation);
 
         info!("Armed {} canary honeytoken tripwires.", planted.len());
         Ok(planted)
     }
 
-    fn spawn_watcher(&self, traps: Vec<CanaryTrap>, session_id: Option<String>) {
+    fn spawn_watcher(
+        &self,
+        traps: Vec<CanaryTrap>,
+        session_id: Option<String>,
+        generation: u64,
+    ) {
         let is_armed = self.is_armed.clone();
         let triggered_count = self.triggered_count.clone();
+        let watch_generation = self.watch_generation.clone();
         let event_sender = self.event_sender.clone();
 
         tokio::spawn(async move {
@@ -200,7 +209,9 @@ users:
                 }
             }
 
-            while is_armed.load(Ordering::SeqCst) {
+            while is_armed.load(Ordering::SeqCst)
+                && watch_generation.load(Ordering::SeqCst) == generation
+            {
                 tokio::time::sleep(Duration::from_millis(500)).await;
 
                 for (path, trap_type, orig_len, orig_accessed) in &initial_meta {
@@ -222,7 +233,9 @@ users:
                                 trap_type,
                                 session_id.as_deref(),
                             );
-                            is_armed.store(false, Ordering::SeqCst);
+                            if watch_generation.load(Ordering::SeqCst) == generation {
+                                is_armed.store(false, Ordering::SeqCst);
+                            }
                             return;
                         }
                     }
@@ -241,6 +254,10 @@ users:
 
     pub fn get_traps(&self) -> &[CanaryTrap] {
         &self.traps
+    }
+
+    pub fn watch_generation(&self) -> u64 {
+        self.watch_generation.load(Ordering::SeqCst)
     }
 }
 
@@ -300,6 +317,19 @@ mod tests {
         for trap in &traps {
             assert!(trap.file_path.exists());
         }
+    }
+
+    #[tokio::test]
+    async fn rearm_advances_watcher_generation() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut manager = CanaryManager::new();
+
+        manager.arm_canaries(temp_dir.path()).await.unwrap();
+        let first_generation = manager.watch_generation();
+        manager.arm_canaries(temp_dir.path()).await.unwrap();
+        let second_generation = manager.watch_generation();
+
+        assert!(second_generation > first_generation);
     }
 
     #[tokio::test]
