@@ -103,14 +103,30 @@ pub enum DeceptionError {
     Json(#[from] serde_json::Error),
 }
 
-#[derive(Default)]
 pub struct DeceptionFabric {
     instances: HashMap<String, DeceptionInstance>,
+    base_root: PathBuf,
+}
+
+impl Default for DeceptionFabric {
+    fn default() -> Self {
+        Self {
+            instances: HashMap::new(),
+            base_root: PathBuf::from(DECEPTION_ROOT),
+        }
+    }
 }
 
 impl DeceptionFabric {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_root(base_root: impl Into<PathBuf>) -> Self {
+        Self {
+            instances: HashMap::new(),
+            base_root: base_root.into(),
+        }
     }
 
     pub fn prepare(
@@ -123,8 +139,8 @@ impl DeceptionFabric {
         }
 
         let profile = DeceptionProfile::select(trace);
-        let root = PathBuf::from(DECEPTION_ROOT).join(session_id);
-        validate_root(&root)?;
+        let root = self.base_root.join(session_id);
+        validate_root(&root, &self.base_root)?;
         fs::create_dir_all(&root)?;
 
         let services = planned_services(profile);
@@ -174,8 +190,8 @@ fn is_safe_session_id(session_id: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
 
-fn validate_root(root: &Path) -> Result<(), DeceptionError> {
-    if root.starts_with(DECEPTION_ROOT) {
+fn validate_root(root: &Path, base_root: &Path) -> Result<(), DeceptionError> {
+    if root.starts_with(base_root) {
         Ok(())
     } else {
         Err(DeceptionError::UnsafeRoot)
@@ -285,6 +301,7 @@ fn now_ms() -> u64 {
 mod tests {
     use super::*;
     use crate::evolve::{EventSource, SecurityEvent, SecurityEventType};
+    use tempfile::TempDir;
 
     fn trace_with_command(command: &str) -> BehaviorTrace {
         let mut profiler = crate::evolve::BehaviorProfiler::new();
@@ -307,7 +324,8 @@ mod tests {
     #[test]
     fn prepared_services_are_loopback_only() {
         let trace = trace_with_command("whoami");
-        let mut fabric = DeceptionFabric::new();
+        let temp = TempDir::new().unwrap();
+        let mut fabric = DeceptionFabric::with_root(temp.path().join("deception"));
         let instance = fabric.prepare("session-a", &trace).unwrap();
 
         assert!(instance.validated);
@@ -321,7 +339,8 @@ mod tests {
     #[test]
     fn unsafe_session_id_is_rejected() {
         let trace = trace_with_command("whoami");
-        let mut fabric = DeceptionFabric::new();
+        let temp = TempDir::new().unwrap();
+        let mut fabric = DeceptionFabric::with_root(temp.path().join("deception"));
         assert!(matches!(
             fabric.prepare("../escape", &trace),
             Err(DeceptionError::InvalidSessionId)
