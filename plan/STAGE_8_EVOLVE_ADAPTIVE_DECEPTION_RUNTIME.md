@@ -153,6 +153,71 @@ sandbox_runtime/
 
 ---
 
+## 6.1. Текущий implementation status
+
+Рабочая ветка:
+
+```text
+stage-8-evolve-event-core
+```
+
+Текущее состояние:
+
+### Phase 8.1 - Event Core
+
+Реализовано:
+
+- `SecurityEvent`, `RiskLevel`, `EvolveState`, `EvolveSession`, `EvolveManager`;
+- единый daemon event sink;
+- event ingestion для canary, sync exec, background execution, browser и HTTP probe;
+- route-level `PolicyViolation` events для RoE violations;
+- единый `evolve_session_id` на audit scope со стороны Host MCP Bridge;
+- canary trigger correlation с текущей behavioral session;
+- устранён старый contract mismatch `token_label` / `base_dir`;
+- stale canary watcher invalidation при повторном arm;
+- manual emergency isolation синхронизирует `EvolveState::Isolate`;
+- daemon observability routes для status, events, sessions и trace;
+- live Docker Evolve regression scenario добавлен в CI.
+
+### Phase 8.2 - Behavior Layer
+
+Реализован baseline:
+
+- `BehaviorProfiler`;
+- ordered `BehaviorTrace`;
+- deterministic behavior tags;
+- process lineage;
+- resource lineage;
+- destination lineage;
+- deterministic risk score;
+- contextual sequence correlation;
+- conservative separation между credential interest и confirmed credential access;
+- decision layer использует effective contextual risk.
+
+Текущая политика до появления Deception Fabric:
+
+```text
+LOW      -> OBSERVE
+MEDIUM   -> SUSPECT / enhanced telemetry
+HIGH     -> existing KillSwitch
+CRITICAL -> existing KillSwitch
+```
+
+Это временный fail-closed режим. После Phase 8.3 безопасный `HIGH` path сможет переходить в `ENGAGE -> DECEIVE`.
+
+### Validation status
+
+GitHub Actions для текущего PR создаёт jobs, но runner не назначается:
+
+```text
+runner_id: 0
+steps: []
+```
+
+Поэтому CI сейчас завершается до checkout и не выполняет Rust/TypeScript/Docker код. Unit и live regression tests уже добавлены в ветку и должны быть прогнаны до merge при восстановлении runner availability.
+
+---
+
 ## 7. Implementation phases
 
 ### Phase 8.1 - Event Core
