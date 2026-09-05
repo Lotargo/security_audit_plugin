@@ -125,20 +125,26 @@ impl EvolveManager {
         session.record_event(&event);
 
         let risk = event.risk_hint.unwrap_or(RiskLevel::Low);
+        let event_type = event.event_type;
         self.push_event(event);
 
         if !self.enabled {
-            return EvolveDecision::LegacyIsolate;
+            return match event_type {
+                super::SecurityEventType::CanaryAccess => EvolveDecision::LegacyIsolate,
+                super::SecurityEventType::EscapeAttempt
+                | super::SecurityEventType::ControlPlaneAccess => EvolveDecision::Isolate,
+                _ => EvolveDecision::Observe,
+            };
         }
 
         match risk {
             RiskLevel::Low => EvolveDecision::Observe,
             RiskLevel::Medium => {
-                self.enter_suspect_state();
+                self.enter_suspect_state(&session_id);
                 EvolveDecision::EnhancedTelemetry
             }
             RiskLevel::High | RiskLevel::Critical => {
-                self.enter_suspect_state();
+                self.enter_suspect_state(&session_id);
 
                 // Phase 8.1 intentionally fails closed here. The event pipeline is active, but
                 // Deception Fabric is not implemented yet, so high-risk behavior cannot safely be
@@ -148,12 +154,12 @@ impl EvolveManager {
         }
     }
 
-    fn enter_suspect_state(&mut self) {
+    fn enter_suspect_state(&mut self, session_id: &str) {
         if self.state == EvolveState::Observe {
             let _ = self.transition(EvolveState::Suspect);
         }
 
-        if let Some(session) = self.sessions.get_mut(DEFAULT_SESSION_ID) {
+        if let Some(session) = self.sessions.get_mut(session_id) {
             if session.state == EvolveState::Observe {
                 session.state = EvolveState::Suspect;
             }
@@ -174,7 +180,7 @@ mod tests {
     use crate::evolve::{EventSource, SecurityEventType};
 
     #[test]
-    fn disabled_manager_preserves_legacy_isolation_decision() {
+    fn disabled_manager_preserves_canary_legacy_isolation_decision() {
         let mut manager = EvolveManager::new();
         let event = SecurityEvent::new(EventSource::Canary, SecurityEventType::CanaryAccess)
             .with_risk_hint(RiskLevel::High);
@@ -184,6 +190,15 @@ mod tests {
             EvolveDecision::LegacyIsolate
         );
         assert_eq!(manager.recent_events(10).len(), 1);
+    }
+
+    #[test]
+    fn disabled_manager_does_not_isolate_on_ordinary_telemetry() {
+        let mut manager = EvolveManager::new();
+        let event = SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
+            .with_risk_hint(RiskLevel::Low);
+
+        assert_eq!(manager.ingest_event(event), EvolveDecision::Observe);
     }
 
     #[test]
