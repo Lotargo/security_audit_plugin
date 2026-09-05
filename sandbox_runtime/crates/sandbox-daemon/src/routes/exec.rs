@@ -1,4 +1,4 @@
-use axum::{http::StatusCode, Json};
+use axum::{http::StatusCode, Extension, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 #[cfg(unix)]
@@ -9,10 +9,12 @@ use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
 
+use crate::evolve_events::EvolveEventSink;
 #[cfg(not(target_os = "windows"))]
 use sandbox_kernel::audit_exec_identity;
 use sandbox_kernel::tmux::TmuxManager;
 use sandbox_kernel::watchdog::{process_command_output, WatchdogResult};
+use sandbox_kernel::{EventSource, RiskLevel, SecurityEvent, SecurityEventType};
 
 const SAFE_CHILD_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
@@ -21,6 +23,7 @@ pub struct ExecRequest {
     pub command: String,
     pub timeout_secs: Option<u64>,
     pub work_dir: Option<String>,
+    pub evolve_session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -38,11 +41,40 @@ pub struct InteractiveTmuxRequest {
     pub input: String,
 }
 
+fn emit_exec_event(
+    event_sink: &EvolveEventSink,
+    session_id: Option<&str>,
+    event_type: SecurityEventType,
+    command: &str,
+    work_dir: &str,
+    result: Option<String>,
+    metadata: serde_json::Value,
+) {
+    let mut event = SecurityEvent::new(EventSource::Process, event_type)
+        .with_command(command.to_string())
+        .with_resource(work_dir.to_string())
+        .with_risk_hint(RiskLevel::Low)
+        .with_metadata(metadata);
+
+    if let Some(session_id) = session_id {
+        event = event.with_session_id(session_id.to_string());
+    }
+    if let Some(result) = result {
+        event = event.with_result(result);
+    }
+
+    event_sink.emit(event);
+}
+
 pub async fn handle_execute(
+    Extension(event_sink): Extension<EvolveEventSink>,
     Json(payload): Json<ExecRequest>,
 ) -> Result<Json<ExecResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let timeout_duration = Duration::from_secs(payload.timeout_secs.unwrap_or(60));
+    let timeout_secs = payload.timeout_secs.unwrap_or(60);
+    let timeout_duration = Duration::from_secs(timeout_secs);
     let work_dir = payload.work_dir.unwrap_or_else(|| "/workspace".to_string());
+    let command_text = payload.command;
+    let evolve_session_id = payload.evolve_session_id;
     let cmd_id = format!(
         "exec_{}",
         std::time::SystemTime::now()
@@ -51,27 +83,38 @@ pub async fn handle_execute(
             .as_millis()
     );
 
+    emit_exec_event(
+        &event_sink,
+        evolve_session_id.as_deref(),
+        SecurityEventType::ProcessExec,
+        &command_text,
+        &work_dir,
+        Some("started".to_string()),
+        json!({
+            "execution_mode": "sync",
+            "timeout_secs": timeout_secs,
+            "command_id": cmd_id
+        }),
+    );
+
     info!("Executing unprivileged audit command in '{}'", work_dir);
 
     #[cfg(target_os = "windows")]
     let mut cmd = {
         let mut c = Command::new("powershell");
-        c.args(["-NoProfile", "-Command", &payload.command]);
+        c.args(["-NoProfile", "-Command", &command_text]);
         c
     };
 
     #[cfg(not(target_os = "windows"))]
     let mut cmd = {
         let mut c = Command::new("/bin/sh");
-        c.args(["-c", &payload.command]);
+        c.args(["-c", &command_text]);
         let (uid, gid) = audit_exec_identity();
         #[cfg(unix)]
         {
             c.as_std_mut().uid(uid).gid(gid);
         }
-        // The daemon carries control-plane trust material in its environment. Agent-controlled
-        // children must receive a clean environment so BRIDGE_SESSION_KEY_HEX/HOST_PUBKEY_HEX and
-        // future daemon secrets can never be recovered with `env` or /proc/self/environ.
         c.env_clear();
         c.env("HOME", "/tmp");
         c.env("PATH", SAFE_CHILD_PATH);
@@ -86,6 +129,15 @@ pub async fn handle_execute(
     let output = match timeout(timeout_duration, cmd.output()).await {
         Ok(Ok(output)) => output,
         Ok(Err(e)) => {
+            emit_exec_event(
+                &event_sink,
+                evolve_session_id.as_deref(),
+                SecurityEventType::ProcessExit,
+                &command_text,
+                &work_dir,
+                Some("spawn_error".to_string()),
+                json!({"command_id": cmd_id}),
+            );
             error!("Command execution failed: {}", e);
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -93,12 +145,22 @@ pub async fn handle_execute(
             ));
         }
         Err(_) => {
+            emit_exec_event(
+                &event_sink,
+                evolve_session_id.as_deref(),
+                SecurityEventType::ProcessExit,
+                &command_text,
+                &work_dir,
+                Some("timeout".to_string()),
+                json!({
+                    "command_id": cmd_id,
+                    "timeout_secs": timeout_secs
+                }),
+            );
             warn!("Command execution timed out after {:?}", timeout_duration);
             return Err((
                 StatusCode::GATEWAY_TIMEOUT,
-                Json(
-                    json!({"error": format!("Command timed out after {}s", timeout_duration.as_secs())}),
-                ),
+                Json(json!({"error": format!("Command timed out after {}s", timeout_secs)})),
             ));
         }
     };
@@ -122,6 +184,21 @@ pub async fn handle_execute(
             log_file_path: None,
         });
 
+    emit_exec_event(
+        &event_sink,
+        evolve_session_id.as_deref(),
+        SecurityEventType::ProcessExit,
+        &command_text,
+        &work_dir,
+        Some(format!("exit_code={exit_code}")),
+        json!({
+            "command_id": cmd_id,
+            "is_truncated": watchdog_res.is_truncated,
+            "total_chars": watchdog_res.total_chars,
+            "log_file_path": watchdog_res.log_file_path
+        }),
+    );
+
     Ok(Json(ExecResponse {
         output: watchdog_res.output,
         exit_code,
@@ -139,6 +216,9 @@ pub async fn handle_interactive_tmux(
         .unwrap_or_else(|| "audit_session".to_string());
     info!("Sending interactive input to tmux session '{}'", session);
 
+    // Interactive input is intentionally not copied into Evolve telemetry because it may contain
+    // passwords, tokens or other secrets. Process-level tmux lifecycle remains observable through
+    // background session events.
     match TmuxManager::send_input(&session, &payload.input) {
         Ok(_) => Ok(Json(json!({"status": "success", "session": session}))),
         Err(e) => Err((
