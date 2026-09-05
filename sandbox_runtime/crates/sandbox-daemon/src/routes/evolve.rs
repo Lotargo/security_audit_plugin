@@ -16,6 +16,11 @@ pub struct EventsQuery {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct TraceQuery {
+    pub session_id: String,
+}
+
 pub async fn handle_set_enabled(
     Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
     Json(payload): Json<SetEvolveEnabledRequest>,
@@ -39,6 +44,27 @@ pub async fn handle_status(
 ) -> Json<serde_json::Value> {
     let manager = evolve_mgr.lock().await;
     Json(json!(manager.status()))
+}
+
+pub async fn handle_sessions(
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
+) -> Json<serde_json::Value> {
+    let manager = evolve_mgr.lock().await;
+    Json(json!({"sessions": manager.sessions()}))
+}
+
+pub async fn handle_trace(
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
+    Query(query): Query<TraceQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let manager = evolve_mgr.lock().await;
+    match manager.behavior_trace(&query.session_id) {
+        Some(trace) => Ok(Json(json!(trace))),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Evolve behavior trace not found"})),
+        )),
+    }
 }
 
 pub async fn handle_events(
