@@ -26,6 +26,9 @@ describe('SandboxBridge Evolve correlation', () => {
       arm_canaries: true,
     });
 
+    const provisionBody = bodyFor(request, '/provision_egress');
+    expect(typeof provisionBody.evolve_session_id).toBe('string');
+
     const canaryBody = bodyFor(request, '/arm_canary');
     const sessionId = canaryBody.evolve_session_id;
     expect(typeof sessionId).toBe('string');
@@ -68,6 +71,34 @@ describe('SandboxBridge Evolve correlation', () => {
     const secondSession = bodyFor(request, '/arm_canary').evolve_session_id;
 
     expect(secondSession).not.toBe(firstSession);
+  });
+
+  it('binds Tor mutations to the active behavioral session', async () => {
+    const { bridge, request } = mockedBridge();
+
+    await bridge.setScope({
+      mode: 'remote',
+      targets: ['example.onion'],
+      proxy: 'tor',
+      arm_canaries: true,
+    });
+    const sessionId = bodyFor(request, '/arm_canary').evolve_session_id;
+
+    request.mockClear();
+    await bridge.rotateTor();
+
+    expect(request).toHaveBeenCalledWith('POST', '/rotate_tor', {
+      evolve_session_id: sessionId,
+    });
+  });
+
+  it('refuses agent reset while a protected runtime state is active', async () => {
+    const { bridge } = mockedBridge();
+    vi.spyOn(bridge, 'getEvolveStatus').mockResolvedValue({ runtime: { state: 'DECEIVE' } });
+    const hardReset = vi.spyOn(bridge.getDocker(), 'hardReset');
+
+    await expect(bridge.reset(true)).rejects.toThrow('temporarily unavailable');
+    expect(hardReset).not.toHaveBeenCalled();
   });
 
   it('exposes authenticated host helpers for Evolve observability', async () => {

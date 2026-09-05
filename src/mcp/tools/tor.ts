@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SandboxBridge } from '../bridge.js';
+import { agentSafeError } from '../security/agent_error.js';
 
 export const RotateTorSchema = z.object({});
 
@@ -22,7 +23,7 @@ export function registerTorTool(server: any, bridge: SandboxBridge) {
       } catch (err: any) {
         return {
           isError: true,
-          content: [{ type: 'text', text: `Failed to rotate Tor IP: ${err.message}` }],
+          content: [{ type: 'text', text: `Failed to rotate Tor IP: ${agentSafeError(err, 'operation unavailable')}` }],
         };
       }
     }

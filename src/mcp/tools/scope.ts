@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SandboxBridge } from '../bridge.js';
+import { agentSafeError } from '../security/agent_error.js';
 
 export const SetScopeSchema = z.object({
   mode: z.enum(['local', 'remote', 'hybrid']).describe('Audit execution mode'),
@@ -49,7 +50,7 @@ export function registerScopeTool(server: any, bridge: SandboxBridge) {
       } catch (err: any) {
         return {
           isError: true,
-          content: [{ type: 'text', text: `Failed to set scope: ${err.message}` }],
+          content: [{ type: 'text', text: `Failed to set scope: ${agentSafeError(err, 'operation unavailable')}` }],
         };
       }
     }

@@ -1,11 +1,22 @@
-use axum::{http::StatusCode, Json};
+use axum::{http::StatusCode, Extension, Json};
+use serde::Deserialize;
 use serde_json::json;
 use std::fmt::Write as FmtWrite;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 
+use crate::surface_guard::{resolve_agent_surface, AgentSurface};
+use sandbox_kernel::EvolveManager;
+
 const TOR_CONTROL_COOKIE: &str = "/var/lib/tor/control_auth_cookie";
+
+#[derive(Debug, Deserialize)]
+pub struct RotateTorRequest {
+    pub evolve_session_id: Option<String>,
+}
 
 fn encode_hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -20,7 +31,26 @@ fn read_control_cookie_hex() -> Result<String, std::io::Error> {
 }
 
 pub async fn handle_rotate_tor(
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
+    Json(payload): Json<RotateTorRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let surface = {
+        let manager = evolve_mgr.lock().await;
+        resolve_agent_surface(&manager, payload.evolve_session_id.as_deref())
+    }
+    .map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "network service temporarily unavailable"})),
+        )
+    })?;
+    if surface == AgentSurface::Deception {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "network service temporarily unavailable"})),
+        ));
+    }
+
     info!("Tor IP rotation requested via localhost cookie-authenticated ControlPort");
 
     let cookie = read_control_cookie_hex().map_err(|e| {

@@ -6,6 +6,7 @@ use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 use crate::evolve_events::EvolveEventSink;
+use crate::surface_guard::{resolve_agent_surface, AgentSurface};
 
 use sandbox_kernel::containment::apply_runtime_containment_with_agent_allowlist;
 use sandbox_kernel::egress::{is_valid_ip_or_cidr, EgressConfig, EgressError, EgressManager};
@@ -26,6 +27,8 @@ pub struct ProvisionEgressRequest {
     pub config: EgressConfig,
     #[serde(default)]
     pub agent_allowed_cidrs: Vec<String>,
+    #[serde(default)]
+    pub evolve_session_id: Option<String>,
 }
 
 fn emit_egress_policy_violation(event_sink: &EvolveEventSink, reason: &str) {
@@ -83,12 +86,31 @@ fn validate_agent_allowlist(
 
 pub async fn handle_provision_egress(
     Extension(event_sink): Extension<EvolveEventSink>,
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
     Json(payload): Json<ProvisionEgressRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let ProvisionEgressRequest {
         config,
         agent_allowed_cidrs,
+        evolve_session_id,
     } = payload;
+
+    let surface = {
+        let manager = evolve_mgr.lock().await;
+        resolve_agent_surface(&manager, evolve_session_id.as_deref())
+    }
+    .map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "scope service temporarily unavailable"})),
+        )
+    })?;
+    if surface == AgentSurface::Deception {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "scope service temporarily unavailable"})),
+        ));
+    }
 
     info!("Provisioning egress rules for mode: {:?}", config.mode);
 

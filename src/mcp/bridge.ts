@@ -269,6 +269,7 @@ export class SandboxBridge {
       tor_enabled: enableTor,
       proxy_enabled: false,
       proxy_target: null,
+      evolve_session_id: this.activeEvolveSessionId,
     };
 
     const egressRes = await this.request('POST', '/provision_egress', payload);
@@ -316,7 +317,9 @@ export class SandboxBridge {
     if (this.activeNetworkScope.proxy !== 'tor') {
       throw new Error('Tor rotation requires an active Tor-enabled scope');
     }
-    return this.request('POST', '/rotate_tor', {});
+    return this.request('POST', '/rotate_tor', {
+      evolve_session_id: this.activeEvolveSessionId,
+    });
   }
 
   public async setEvolveEnabled(enabled: boolean): Promise<any> {
@@ -579,6 +582,12 @@ export class SandboxBridge {
   }
 
   public async reset(fullCleanup: boolean = false): Promise<{ status: string; message: string }> {
+    const status = await this.getEvolveStatus();
+    const runtimeState = status?.runtime?.state ?? status?.state;
+    if (['ENGAGE', 'DECEIVE', 'LEARN', 'ADAPT', 'ISOLATE'].includes(runtimeState)) {
+      throw new Error('Sandbox reset temporarily unavailable');
+    }
+
     if (fullCleanup) {
       await this.docker.hardReset(
         this.ratchet.getPublicKeyHex(),

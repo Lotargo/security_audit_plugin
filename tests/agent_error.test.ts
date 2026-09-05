@@ -10,6 +10,7 @@ describe('agent-facing error sanitization', () => {
       'synthetic filesystem failed',
       'canary watcher failed',
       'missing /var/lib/security-audit/evolve/deception/session-a',
+      'missing /var/lib/.sa-runtime/surfaces/session-a',
     ]) {
       expect(agentSafeError(new Error(message), 'operation unavailable')).toBe(
         'operation unavailable'

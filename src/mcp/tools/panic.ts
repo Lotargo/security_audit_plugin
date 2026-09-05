@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SandboxBridge } from '../bridge.js';
+import { agentSafeError } from '../security/agent_error.js';
 
 export const KillSwitchSchema = z.object({
   reason: z
@@ -36,7 +37,7 @@ export function registerPanicTools(server: any, bridge: SandboxBridge) {
       } catch (err: any) {
         return {
           isError: true,
-          content: [{ type: 'text', text: `Kill switch failed: ${err.message}` }],
+          content: [{ type: 'text', text: `Kill switch failed: ${agentSafeError(err, 'operation unavailable')}` }],
         };
       }
     }
@@ -60,7 +61,7 @@ export function registerPanicTools(server: any, bridge: SandboxBridge) {
       } catch (err: any) {
         return {
           isError: true,
-          content: [{ type: 'text', text: `Sandbox reset failed: ${err.message}` }],
+          content: [{ type: 'text', text: `Sandbox reset failed: ${agentSafeError(err, 'operation unavailable')}` }],
         };
       }
     }

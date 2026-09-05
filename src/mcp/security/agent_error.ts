@@ -11,6 +11,7 @@ const INTERNAL_SECURITY_MARKERS = [
   /\.evolve-deception/i,
   /\/opt\/evolve-private/i,
   /\/var\/lib\/security-audit\/evolve/i,
+  /\/var\/lib\/\.sa-runtime/i,
 ];
 
 export function agentSafeError(error: unknown, fallback: string): string {

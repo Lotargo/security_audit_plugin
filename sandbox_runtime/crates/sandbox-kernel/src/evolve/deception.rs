@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
-const DECEPTION_ROOT: &str = "/var/lib/security-audit/evolve/deception";
+const DECEPTION_ROOT: &str = "/var/lib/.sa-runtime/surfaces";
 const SYNTHETIC_PORT_MIN: u16 = 18_000;
 const SYNTHETIC_PORT_MAX: u16 = 18_999;
 
