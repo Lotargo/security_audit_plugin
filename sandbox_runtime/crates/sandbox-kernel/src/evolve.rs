@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+#[cfg(all(target_os = "linux", not(test)))]
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 #[cfg(all(target_os = "linux", not(test)))]
 use std::process::{Command, Stdio};
@@ -10,7 +12,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
-use tracing::{info, warn};
+use tracing::info;
+#[cfg(all(target_os = "linux", not(test)))]
+use tracing::warn;
 
 use crate::panic::KillSwitch;
 
@@ -26,7 +30,7 @@ pub enum EvolveError {
     IsolationFailed(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EvolvePhase {
     Idle,
