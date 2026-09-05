@@ -5,6 +5,10 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 const DEFAULT_TRACE_EVENT_CAPACITY: usize = 256;
 const DEFAULT_SESSION_ID: &str = "runtime-default";
 
+fn default_trace_event_capacity() -> usize {
+    DEFAULT_TRACE_EVENT_CAPACITY
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BehaviorTag {
@@ -35,6 +39,7 @@ pub struct BehaviorTrace {
     pub risk_level: RiskLevel,
     pub tags: BTreeSet<BehaviorTag>,
     pub events: VecDeque<SecurityEvent>,
+    #[serde(skip, default = "default_trace_event_capacity")]
     event_capacity: usize,
 }
 
@@ -88,8 +93,9 @@ impl BehaviorProfiler {
         let mut tags = classify_event(event);
         let base_risk = deterministic_event_risk(event);
 
+        let event_capacity = self.event_capacity;
         let trace = self.traces.entry(session_id.clone()).or_insert_with(|| {
-            BehaviorTrace::new(session_id, event.timestamp_ms, self.event_capacity)
+            BehaviorTrace::new(session_id, event.timestamp_ms, event_capacity)
         });
 
         let sequence_risk = sequence_risk(trace, event, &tags);
@@ -117,6 +123,10 @@ impl BehaviorProfiler {
 
     pub fn trace(&self, session_id: &str) -> Option<&BehaviorTrace> {
         self.traces.get(session_id)
+    }
+
+    pub fn trace_count(&self) -> usize {
+        self.traces.len()
     }
 
     pub fn traces(&self) -> Vec<BehaviorTrace> {
