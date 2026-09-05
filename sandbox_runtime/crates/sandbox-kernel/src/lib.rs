@@ -13,10 +13,12 @@ pub use containment::{
 };
 pub use egress::{AuditMode, EgressConfig, EgressManager};
 pub use evolve::{
-    BehaviorAssessment, BehaviorProfiler, BehaviorTag, BehaviorTrace, DeceptionError,
+    AttackPathError, BehaviorAssessment, BehaviorProfiler, BehaviorTag, BehaviorTrace,
+    DeceptionError,
     DeceptionFabric, DeceptionInstance, DeceptionProfile, DeceptionService, EventSource,
     EvolveDecision,
-    EvolveManager, EvolveSession, EvolveState, EvolveStatus, FeedbackError, FeedbackEvent,
+    EnvironmentNarrative, EvolveManager, EvolveSession, EvolveState, EvolveStatus, FeedbackError,
+    FeedbackEvent,
     FeedbackMemory, FeedbackPhase, FeedbackStatus, RiskLevel, SecurityEvent, SecurityEventType,
     StateTransitionError,
 };

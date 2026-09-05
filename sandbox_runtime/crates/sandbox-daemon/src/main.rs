@@ -325,6 +325,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/evolve/observe", post(routes::evolve::handle_observe))
         .route("/evolve/sessions", get(routes::evolve::handle_sessions))
         .route("/evolve/trace", get(routes::evolve::handle_trace))
+        .route(
+            "/evolve/attack-path",
+            get(routes::evolve::handle_attack_path),
+        )
         .route("/evolve/events", get(routes::evolve::handle_events))
         .route(
             "/evolve/deception/prepare",

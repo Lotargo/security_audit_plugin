@@ -358,6 +358,15 @@ export class SandboxBridge {
     );
   }
 
+  public async getShadowAttackPath(
+    sessionId: string = this.activeEvolveSessionId
+  ): Promise<any> {
+    return this.request(
+      'GET',
+      `/evolve/attack-path?session_id=${encodeURIComponent(sessionId)}`
+    );
+  }
+
   public async prepareDeception(
     sessionId: string = this.activeEvolveSessionId
   ): Promise<any> {

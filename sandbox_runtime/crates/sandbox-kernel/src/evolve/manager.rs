@@ -1,7 +1,7 @@
 use super::{
     BehaviorProfiler, BehaviorTrace, DeceptionError, DeceptionFabric, DeceptionInstance,
-    EvolveSession, EvolveState, FeedbackError, FeedbackEvent, FeedbackMemory, FeedbackStatus,
-    RiskLevel, SecurityEvent, StateTransitionError,
+    DeceptionProfile, EvolveSession, EvolveState, FeedbackError, FeedbackEvent, FeedbackMemory,
+    FeedbackStatus, RiskLevel, SecurityEvent, ShadowAttackPath, StateTransitionError,
 };
 use serde::Serialize;
 use std::path::Path;
@@ -28,6 +28,7 @@ pub struct EvolveStatus {
     pub sessions: usize,
     pub behavior_traces: usize,
     pub deception_instances: usize,
+    pub shadow_paths: usize,
 }
 
 pub struct EvolveManager {
@@ -38,6 +39,7 @@ pub struct EvolveManager {
     behavior: BehaviorProfiler,
     feedback: FeedbackMemory,
     deception: DeceptionFabric,
+    attack_paths: HashMap<String, ShadowAttackPath>,
     event_capacity: usize,
 }
 
@@ -63,6 +65,7 @@ impl EvolveManager {
             behavior: BehaviorProfiler::new(),
             feedback: FeedbackMemory::new(),
             deception: DeceptionFabric::new(),
+            attack_paths: HashMap::new(),
             event_capacity: DEFAULT_EVENT_CAPACITY,
         }
     }
@@ -114,6 +117,7 @@ impl EvolveManager {
             sessions: self.sessions.len(),
             behavior_traces: self.behavior.trace_count(),
             deception_instances: self.deception.instance_count(),
+            shadow_paths: self.attack_paths.len(),
         }
     }
 
@@ -136,15 +140,27 @@ impl EvolveManager {
             .trace(session_id)
             .cloned()
             .ok_or_else(|| DeceptionError::MissingBehaviorTrace(session_id.to_string()))?;
-        let instance = self.deception.prepare(session_id, &trace)?;
+        let entry_profile = DeceptionProfile::select(&trace);
+        let path = ShadowAttackPath::build(session_id, entry_profile)
+            .map_err(|error| DeceptionError::AttackPath(error.to_string()))?;
+        let instance = self
+            .deception
+            .prepare_with_path(session_id, &trace, &path)?;
+
         if let Some(session) = self.sessions.get_mut(session_id) {
             session.active_deception_profile = Some(instance.profile.id().to_string());
+            session.shadow_path_id = Some(path.path_id.clone());
         }
+        self.attack_paths.insert(session_id.to_string(), path);
         Ok(instance)
     }
 
     pub fn deception_instance(&self, session_id: &str) -> Option<DeceptionInstance> {
         self.deception.instance(session_id).cloned()
+    }
+
+    pub fn shadow_attack_path(&self, session_id: &str) -> Option<ShadowAttackPath> {
+        self.attack_paths.get(session_id).cloned()
     }
 
     pub fn session_state(&self, session_id: &str) -> Option<EvolveState> {
@@ -192,7 +208,9 @@ impl EvolveManager {
     ) -> Result<bool, DeceptionError> {
         if let Some(session) = self.sessions.get_mut(session_id) {
             session.active_deception_profile = None;
+            session.shadow_path_id = None;
         }
+        self.attack_paths.remove(session_id);
         self.deception.destroy(session_id)
     }
 
@@ -250,7 +268,34 @@ impl EvolveManager {
 
         let risk = assessment.risk_level;
         let event_type = event.event_type;
+
+        let path_sync_failed = if session_state == EvolveState::Deceive {
+            let changed = self
+                .attack_paths
+                .get_mut(&session_id)
+                .is_some_and(|path| path.observe(&event, &assessment.tags));
+
+            if changed {
+                self.attack_paths
+                    .get(&session_id)
+                    .cloned()
+                    .is_some_and(|path| {
+                        self.deception
+                            .sync_attack_path(&session_id, &path)
+                            .is_err()
+                    })
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
         self.push_event(event);
+
+        if path_sync_failed {
+            return EvolveDecision::Isolate;
+        }
 
         if !self.enabled {
             return match event_type {
@@ -439,6 +484,47 @@ mod tests {
                 .session_id,
             "session-a"
         );
+    }
+
+    #[test]
+    fn shadow_path_expands_from_deceived_behavior() {
+        let temp = TempDir::new().unwrap();
+        let mut manager = EvolveManager::new();
+        manager.deception = DeceptionFabric::with_root(temp.path().join("deception"));
+        manager.set_enabled(true);
+
+        let high = SecurityEvent::new(EventSource::Canary, SecurityEventType::CanaryAccess)
+            .with_session_id("session-a")
+            .with_risk_hint(RiskLevel::High);
+        assert_eq!(
+            manager.ingest_event(high),
+            EvolveDecision::EngageDeception
+        );
+        manager.prepare_deception_for_session("session-a").unwrap();
+        manager.mark_deception_active("session-a").unwrap();
+
+        let before = manager
+            .shadow_attack_path("session-a")
+            .unwrap()
+            .visible_nodes()
+            .len();
+        let command = SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
+            .with_session_id("session-a")
+            .with_command("kubectl get pods");
+        assert_eq!(manager.ingest_event(command), EvolveDecision::Observe);
+
+        let after = manager
+            .shadow_attack_path("session-a")
+            .unwrap()
+            .visible_nodes()
+            .len();
+        assert!(after >= before);
+        assert!(manager
+            .shadow_attack_path("session-a")
+            .unwrap()
+            .visible_nodes()
+            .iter()
+            .any(|node| node.profile == DeceptionProfile::KubernetesNode));
     }
 
     #[test]

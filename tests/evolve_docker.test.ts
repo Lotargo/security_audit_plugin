@@ -173,6 +173,19 @@ describeDocker('Evolve automatic containment-to-deception transition', () => {
     expect(shadowNote.exit_code).toBe(0);
     expect(shadowNote.stdout).toContain('shadow-note');
 
+    const initialMap = await bridge.exec('cat /workspace/ops/service-map.json');
+    expect(initialMap.exit_code).toBe(0);
+    expect(initialMap.stdout).toContain('app.prod.internal');
+
+    const appHop = await bridge.exec(
+      'curl -fsS --connect-timeout 2 http://app.prod.internal:18082/'
+    );
+    expect(appHop.exit_code).toBe(0);
+
+    const expandedMap = await bridge.exec('cat /workspace/ops/service-map.json');
+    expect(expandedMap.exit_code).toBe(0);
+    expect(expandedMap.stdout).toContain('db-prod.internal');
+
     const workspaceView = await bridge.exec('pwd; ls -la /workspace; cat /workspace/manifest.json');
     expect(workspaceView.exit_code).toBe(0);
     expect(workspaceView.stdout).toContain('/workspace');

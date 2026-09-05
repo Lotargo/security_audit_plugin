@@ -1,4 +1,4 @@
-use super::{BehaviorTag, BehaviorTrace};
+use super::{BehaviorTag, BehaviorTrace, ShadowAttackPath, ShadowNodeState};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -116,6 +116,8 @@ pub enum DeceptionError {
     Io(#[from] std::io::Error),
     #[error("failed to serialize deception manifest: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("failed to construct Shadow Attack Path: {0}")]
+    AttackPath(String),
 }
 
 pub struct DeceptionFabric {
@@ -150,6 +152,18 @@ impl DeceptionFabric {
         session_id: &str,
         trace: &BehaviorTrace,
     ) -> Result<DeceptionInstance, DeceptionError> {
+        let profile = DeceptionProfile::select(trace);
+        let path = ShadowAttackPath::build(session_id, profile)
+            .map_err(|error| DeceptionError::AttackPath(error.to_string()))?;
+        self.prepare_with_path(session_id, trace, &path)
+    }
+
+    pub fn prepare_with_path(
+        &mut self,
+        session_id: &str,
+        trace: &BehaviorTrace,
+        path: &ShadowAttackPath,
+    ) -> Result<DeceptionInstance, DeceptionError> {
         if !is_safe_session_id(session_id) {
             return Err(DeceptionError::InvalidSessionId);
         }
@@ -161,12 +175,23 @@ impl DeceptionFabric {
         restrict_staging_root(&self.base_root)?;
         make_session_directory_writable(&root)?;
 
-        let services = planned_services(profile);
+        let services: Vec<DeceptionService> = path
+            .nodes
+            .values()
+            .map(|node| DeceptionService {
+                name: node.service_name.clone(),
+                hostname: node.hostname.clone(),
+                bind_host: "127.0.0.1".to_string(),
+                port: node.port,
+                protocol: node.protocol.clone(),
+            })
+            .collect();
         for service in &services {
             validate_service(service)?;
         }
 
         materialize_profile(&root, profile, &services)?;
+        sync_path_projection(&root, path)?;
         let instance = DeceptionInstance {
             instance_id: format!("decoy-{session_id}-{}", now_ms()),
             session_id: session_id.to_string(),
@@ -179,6 +204,19 @@ impl DeceptionFabric {
         self.instances
             .insert(session_id.to_string(), instance.clone());
         Ok(instance)
+    }
+
+    pub fn sync_attack_path(
+        &self,
+        session_id: &str,
+        path: &ShadowAttackPath,
+    ) -> Result<(), DeceptionError> {
+        let instance = self
+            .instances
+            .get(session_id)
+            .ok_or_else(|| DeceptionError::MissingBehaviorTrace(session_id.to_string()))?;
+        sync_path_projection(&instance.root, path)?;
+        Ok(())
     }
 
     pub fn instance(&self, session_id: &str) -> Option<&DeceptionInstance> {
@@ -398,6 +436,55 @@ fn write_file(root: &Path, relative: &str, value: &str) -> Result<(), std::io::E
     }
     fs::write(&path, value)?;
     make_session_file_writable(&path)
+}
+
+fn sync_path_projection(
+    root: &Path,
+    path: &ShadowAttackPath,
+) -> Result<(), DeceptionError> {
+    let visible_nodes = path.visible_nodes();
+
+    let mut hosts = String::from("127.0.0.1 localhost\n::1 localhost\n");
+    let inventory: Vec<_> = visible_nodes
+        .iter()
+        .map(|node| {
+            hosts.push_str(&format!("127.0.0.1 {}\n", node.hostname));
+            serde_json::json!({
+                "name": node.service_name,
+                "host": node.hostname,
+                "port": node.port,
+                "protocol": node.protocol,
+                "status": match node.state {
+                    ShadowNodeState::Visited => "active",
+                    ShadowNodeState::Exposed => "available",
+                    ShadowNodeState::Hidden => "offline",
+                }
+            })
+        })
+        .collect();
+
+    write_file(root, "etc/hosts", &hosts)?;
+    write_file(
+        root,
+        "ops/service-map.json",
+        &serde_json::to_string_pretty(&serde_json::json!({
+            "environment": path.narrative.environment,
+            "region": path.narrative.region,
+            "services": inventory,
+        }))?,
+    )?;
+
+    let active = path
+        .nodes
+        .get(&path.active_node_id)
+        .map(|node| node.hostname.clone())
+        .unwrap_or_else(|| path.narrative.hostname.clone());
+    write_file(
+        root,
+        "ops/current-node",
+        &format!("{}\n", active),
+    )?;
+    Ok(())
 }
 
 fn materialize_synthetic_etc(

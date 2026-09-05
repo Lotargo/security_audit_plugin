@@ -25,6 +25,11 @@ pub struct TraceQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct AttackPathQuery {
+    pub session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct DeceptionSessionRequest {
     pub session_id: String,
 }
@@ -135,6 +140,20 @@ pub async fn handle_trace(
     match manager.behavior_trace(&query.session_id) {
         Some(trace) => Ok(Json(json!(trace))),
         None => Err((StatusCode::NOT_FOUND, Json(json!({"error": "Evolve behavior trace not found"})))),
+    }
+}
+
+pub async fn handle_attack_path(
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
+    Query(query): Query<AttackPathQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let manager = evolve_mgr.lock().await;
+    match manager.shadow_attack_path(&query.session_id) {
+        Some(path) => Ok(Json(json!(path))),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Shadow Attack Path not found"})),
+        )),
     }
 }
 

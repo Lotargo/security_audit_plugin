@@ -327,13 +327,21 @@ Synthetic fs read/write выполняются внутри namespace, поэт�
 
 ### Phase 8.4 - Shadow Attack Path
 
-Реализовать:
+Baseline реализован:
 
-- shadow graph;
-- session-specific topology;
-- `EnvironmentNarrative`;
-- динамический выбор следующего shadow node;
-- ограничения на допустимые типы узлов.
+- `ShadowAttackPath` с session-specific graph;
+- фиксированный allowlist node profiles;
+- `EnvironmentNarrative` с production legend и hostname validation;
+- состояния node: hidden / exposed / visited;
+- entry node + только один следующий node видимы при старте;
+- все shadow services поднимаются заранее, но hidden nodes отсутствуют из synthetic `/etc/hosts` и inventory;
+- `ops/service-map.json` и `ops/current-node` проецируют только раскрытую часть topology;
+- команды и behavior tags динамически раскрывают релевантные узлы;
+- посещение узла раскрывает его следующий safe hop;
+- ошибка синхронизации attack path приводит к fail-closed `ISOLATE`;
+- trusted host/operator endpoint `/evolve/attack-path` даёт observability без публикации в agent MCP.
+
+Следующий шаг 8.4: добавить более реалистичную synthetic network topology вместо logical hostnames поверх loopback и усилить narrative continuity между типами узлов.
 
 ### Phase 8.5 - TTP Learning
 
