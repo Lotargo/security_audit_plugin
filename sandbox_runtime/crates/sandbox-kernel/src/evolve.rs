@@ -129,7 +129,6 @@ impl EvolveManager {
         let metadata_root = base_dir.join(".evolve");
         let decoy_root = base_dir.join(".deployment").join("prod");
         fs::create_dir_all(&metadata_root)?;
-        fs::create_dir_all(&decoy_root)?;
 
         let event_log = metadata_root.join("events.jsonl");
         let profile_path = metadata_root.join("profile.json");
@@ -141,9 +140,7 @@ impl EvolveManager {
             PersistedProfile::default()
         };
 
-        self.materialize_decoy_surface(&decoy_root)?;
-
-        let should_start_watcher = {
+        {
             let mut state = self.inner.lock().map_err(|_| EvolveError::StatePoisoned)?;
             state.phase = EvolvePhase::Armed;
             state.generation = persisted.generation;
@@ -155,15 +152,9 @@ impl EvolveManager {
             state.event_log = Some(event_log);
             state.profile_path = Some(profile_path);
             state.next_event_id = state.observation_count.saturating_add(1);
-            let should_start = !state.watcher_started;
-            state.watcher_started = true;
-            should_start
-        };
+        }
 
         self.persist_profile()?;
-        if should_start_watcher {
-            self.spawn_decoy_watcher(decoy_root);
-        }
         info!("Evolve adaptive deception layer armed.");
         self.status()
     }
@@ -235,9 +226,9 @@ impl EvolveManager {
     }
 
     fn ensure_isolated(&self, reason: &str) -> Result<(), EvolveError> {
-        let should_trigger = {
+        let (should_trigger, decoy_root) = {
             let mut state = self.inner.lock().map_err(|_| EvolveError::StatePoisoned)?;
-            match state.phase {
+            let should_trigger = match state.phase {
                 EvolvePhase::Idle | EvolvePhase::Armed => {
                     state.phase = EvolvePhase::IsolatedObserving;
                     state.trigger_count = state.trigger_count.saturating_add(1);
@@ -245,12 +236,35 @@ impl EvolveManager {
                     true
                 }
                 EvolvePhase::IsolatedObserving | EvolvePhase::Adapted => false,
-            }
+            };
+            (should_trigger, state.decoy_root.clone())
         };
 
         if should_trigger && !KillSwitch::is_isolated() {
             KillSwitch::trigger(reason)
                 .map_err(|e| EvolveError::IsolationFailed(e.to_string()))?;
+        }
+
+        // The deeper fake infrastructure appears only after containment. This prevents normal
+        // audit tooling from walking the decoy tree during healthy operation and turns the
+        // transition into an actual dynamic surface substitution.
+        if should_trigger {
+            if let Some(root) = decoy_root {
+                self.materialize_decoy_surface(&root)?;
+                let should_start_watcher = {
+                    let mut state =
+                        self.inner.lock().map_err(|_| EvolveError::StatePoisoned)?;
+                    if state.watcher_started {
+                        false
+                    } else {
+                        state.watcher_started = true;
+                        true
+                    }
+                };
+                if should_start_watcher {
+                    self.spawn_decoy_watcher(root);
+                }
+            }
         }
 
         self.persist_profile()?;
@@ -583,8 +597,15 @@ mod tests {
 
         let status = manager.arm(tmp.path()).unwrap();
         assert_eq!(status.phase, EvolvePhase::Armed);
-        assert!(tmp.path().join(".deployment/prod/manifest.json").exists());
+        assert!(!tmp.path().join(".deployment/prod/manifest.json").exists());
         assert!(tmp.path().join(".evolve/profile.json").exists());
+
+        manager
+            .activate_from_canary("env_secrets", &tmp.path().join(".env.decoy"))
+            .unwrap();
+        assert!(tmp.path().join(".deployment/prod/manifest.json").exists());
+        assert!(KillSwitch::is_isolated());
+        KillSwitch::reset_isolation();
     }
 
     #[test]
