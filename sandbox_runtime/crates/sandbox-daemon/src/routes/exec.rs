@@ -48,6 +48,7 @@ fn emit_exec_event(
     command: &str,
     work_dir: &str,
     result: Option<String>,
+    process_id: Option<u32>,
     metadata: serde_json::Value,
 ) {
     let mut event = SecurityEvent::new(EventSource::Process, event_type)
@@ -61,6 +62,9 @@ fn emit_exec_event(
     }
     if let Some(result) = result {
         event = event.with_result(result);
+    }
+    if let Some(process_id) = process_id {
+        event = event.with_process(process_id, Some(std::process::id()));
     }
 
     event_sink.emit(event);
@@ -86,10 +90,11 @@ pub async fn handle_execute(
     emit_exec_event(
         &event_sink,
         evolve_session_id.as_deref(),
-        SecurityEventType::ProcessExec,
+        SecurityEventType::ProcessSpawn,
         &command_text,
         &work_dir,
-        Some("started".to_string()),
+        Some("requested".to_string()),
+        None,
         json!({
             "execution_mode": "sync",
             "timeout_secs": timeout_secs,
@@ -125,8 +130,45 @@ pub async fn handle_execute(
     if std::path::Path::new(&work_dir).exists() {
         cmd.current_dir(&work_dir);
     }
+    cmd.kill_on_drop(true);
 
-    let output = match timeout(timeout_duration, cmd.output()).await {
+    let child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            emit_exec_event(
+                &event_sink,
+                evolve_session_id.as_deref(),
+                SecurityEventType::ProcessExit,
+                &command_text,
+                &work_dir,
+                Some("spawn_error".to_string()),
+                None,
+                json!({"command_id": cmd_id}),
+            );
+            error!("Command execution failed: {}", e);
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Command spawn failed: {}", e)})),
+            ));
+        }
+    };
+
+    let process_id = child.id();
+    emit_exec_event(
+        &event_sink,
+        evolve_session_id.as_deref(),
+        SecurityEventType::ProcessExec,
+        &command_text,
+        &work_dir,
+        Some("started".to_string()),
+        process_id,
+        json!({
+            "execution_mode": "sync",
+            "command_id": cmd_id
+        }),
+    );
+
+    let output = match timeout(timeout_duration, child.wait_with_output()).await {
         Ok(Ok(output)) => output,
         Ok(Err(e)) => {
             emit_exec_event(
@@ -135,13 +177,14 @@ pub async fn handle_execute(
                 SecurityEventType::ProcessExit,
                 &command_text,
                 &work_dir,
-                Some("spawn_error".to_string()),
+                Some("wait_error".to_string()),
+                process_id,
                 json!({"command_id": cmd_id}),
             );
-            error!("Command execution failed: {}", e);
+            error!("Command wait failed: {}", e);
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("Command spawn failed: {}", e)})),
+                Json(json!({"error": format!("Command wait failed: {}", e)})),
             ));
         }
         Err(_) => {
@@ -152,6 +195,7 @@ pub async fn handle_execute(
                 &command_text,
                 &work_dir,
                 Some("timeout".to_string()),
+                process_id,
                 json!({
                     "command_id": cmd_id,
                     "timeout_secs": timeout_secs
@@ -191,6 +235,7 @@ pub async fn handle_execute(
         &command_text,
         &work_dir,
         Some(format!("exit_code={exit_code}")),
+        process_id,
         json!({
             "command_id": cmd_id,
             "is_truncated": watchdog_res.is_truncated,
