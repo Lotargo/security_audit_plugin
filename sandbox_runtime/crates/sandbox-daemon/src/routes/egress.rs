@@ -99,7 +99,7 @@ pub async fn handle_provision_egress(
     let manager = EgressManager::new();
     if let Err(e) = manager.apply_rules(&config) {
         error!("Failed to apply egress rules: {}", e);
-        let status = match e {
+        let status = match &e {
             EgressError::InvalidAddress(_) | EgressError::InvalidPolicy(_) => {
                 emit_egress_policy_violation(
                     &event_sink,
