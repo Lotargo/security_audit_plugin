@@ -71,6 +71,7 @@ impl DeceptionProfile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeceptionService {
     pub name: String,
+    pub hostname: String,
     pub bind_host: String,
     pub port: u16,
     pub protocol: String,
@@ -143,8 +144,8 @@ impl DeceptionFabric {
         let root = self.base_root.join(session_id);
         validate_root(&root, &self.base_root)?;
         fs::create_dir_all(&root)?;
-        restrict_directory(&self.base_root)?;
-        restrict_directory(&root)?;
+        restrict_staging_root(&self.base_root)?;
+        make_session_directory_writable(&root)?;
 
         let services = planned_services(profile);
         for service in &services {
@@ -215,21 +216,38 @@ fn validate_service(service: &DeceptionService) -> Result<(), DeceptionError> {
 }
 
 fn planned_services(profile: DeceptionProfile) -> Vec<DeceptionService> {
-    let specs: &[(&str, u16, &str)] = match profile {
-        DeceptionProfile::DeveloperWorkstation => &[("dev-api", 18080, "http")],
-        DeceptionProfile::CiRunner => &[("artifact-api", 18081, "http")],
-        DeceptionProfile::ApplicationServer => &[("app-http", 18082, "http")],
-        DeceptionProfile::DatabaseHost => &[("postgres-shadow", 18432, "postgres")],
-        DeceptionProfile::KubernetesNode => &[("kube-api-shadow", 18084, "http")],
-        DeceptionProfile::BastionHost => &[("ssh-shadow", 18022, "ssh")],
-        DeceptionProfile::SecretsService => &[("vault-shadow", 18200, "http")],
-        DeceptionProfile::InternalApi => &[("internal-api-shadow", 18083, "http")],
+    let specs: &[(&str, &str, u16, &str)] = match profile {
+        DeceptionProfile::DeveloperWorkstation => {
+            &[("dev-api", "dev-api.prod.internal", 18080, "http")]
+        }
+        DeceptionProfile::CiRunner => {
+            &[("artifact-api", "artifacts.prod.internal", 18081, "http")]
+        }
+        DeceptionProfile::ApplicationServer => {
+            &[("app-http", "app.prod.internal", 18082, "http")]
+        }
+        DeceptionProfile::DatabaseHost => {
+            &[("postgres-shadow", "db-prod.internal", 18432, "postgres")]
+        }
+        DeceptionProfile::KubernetesNode => {
+            &[("kube-api-shadow", "control-plane.internal", 18084, "http")]
+        }
+        DeceptionProfile::BastionHost => {
+            &[("ssh-shadow", "bastion.prod.internal", 18022, "ssh")]
+        }
+        DeceptionProfile::SecretsService => {
+            &[("vault-shadow", "vault.prod.internal", 18200, "http")]
+        }
+        DeceptionProfile::InternalApi => {
+            &[("internal-api-shadow", "api.prod.internal", 18083, "http")]
+        }
     };
 
     specs
         .iter()
-        .map(|(name, port, protocol)| DeceptionService {
+        .map(|(name, hostname, port, protocol)| DeceptionService {
             name: (*name).to_string(),
+            hostname: (*hostname).to_string(),
             bind_host: "127.0.0.1".to_string(),
             port: *port,
             protocol: (*protocol).to_string(),
@@ -242,6 +260,12 @@ fn materialize_profile(
     profile: DeceptionProfile,
     services: &[DeceptionService],
 ) -> Result<(), DeceptionError> {
+    let service = services
+        .first()
+        .ok_or_else(|| DeceptionError::UnsafeService("missing".to_string(), 0))?;
+
+    materialize_synthetic_etc(root, services)?;
+
     let manifest = serde_json::json!({
         "environment": "production",
         "profile": profile.id(),
@@ -250,33 +274,93 @@ fn materialize_profile(
     });
     let manifest_path = root.join("manifest.json");
     fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
-    restrict_file(&manifest_path)?;
+    make_session_file_writable(&manifest_path)?;
 
     match profile {
         DeceptionProfile::DeveloperWorkstation => {
-            write_file(root, "home/.env", "API_URL=http://internal-api.shadow\nDEPLOY_ENV=production\n")?;
-            write_file(root, "home/.ssh/config", "Host bastion-prod\n  HostName bastion.shadow.internal\n  User deploy\n")?;
+            write_file(
+                root,
+                "home/.env",
+                &format!(
+                    "API_URL=http://{}:{}\nDEPLOY_ENV=production\n",
+                    service.hostname, service.port
+                ),
+            )?;
+            write_file(
+                root,
+                "home/.ssh/config",
+                "Host bastion-prod\n  HostName bastion.prod.internal\n  User deploy\n",
+            )?;
         }
         DeceptionProfile::CiRunner => {
-            write_file(root, "ci/build.env", "REGISTRY=registry.shadow.internal\nDEPLOY_TARGET=production\n")?;
+            write_file(
+                root,
+                "ci/build.env",
+                &format!(
+                    "ARTIFACT_API=http://{}:{}\nDEPLOY_TARGET=production\n",
+                    service.hostname, service.port
+                ),
+            )?;
         }
         DeceptionProfile::ApplicationServer => {
-            write_file(root, "app/runtime.env", "DATABASE_HOST=db.shadow.internal\nSECRETS_URL=http://vault.shadow.internal\n")?;
+            write_file(
+                root,
+                "app/runtime.env",
+                &format!(
+                    "HEALTH_API=http://{}:{}\nDATABASE_HOST=db-prod.internal\nSECRETS_URL=http://vault.prod.internal\n",
+                    service.hostname, service.port
+                ),
+            )?;
         }
         DeceptionProfile::DatabaseHost => {
-            write_file(root, "database/replication.env", "PRIMARY=db-primary.shadow.internal\nREPLICA_USER=replicator\n")?;
+            write_file(
+                root,
+                "database/replication.env",
+                &format!(
+                    "PRIMARY={}:{}\nREPLICA_USER=replicator\n",
+                    service.hostname, service.port
+                ),
+            )?;
         }
         DeceptionProfile::KubernetesNode => {
-            write_file(root, "kubernetes/admin.conf", "apiVersion: v1\nclusters:\n- cluster:\n    server: https://kube-api.shadow.internal:6443\n  name: production\n")?;
+            write_file(
+                root,
+                "kubernetes/admin.conf",
+                &format!(
+                    "apiVersion: v1\nclusters:\n- cluster:\n    server: http://{}:{}\n  name: production\n",
+                    service.hostname, service.port
+                ),
+            )?;
         }
         DeceptionProfile::BastionHost => {
-            write_file(root, "ssh/bastion.conf", "Host app-prod\n  HostName app.shadow.internal\n  User deploy\n")?;
+            write_file(
+                root,
+                "ssh/bastion.conf",
+                &format!(
+                    "Host bastion-prod\n  HostName {}\n  Port {}\n  User deploy\n",
+                    service.hostname, service.port
+                ),
+            )?;
         }
         DeceptionProfile::SecretsService => {
-            write_file(root, "secrets/bootstrap.env", "VAULT_ADDR=http://vault.shadow.internal\nTOKEN_PATH=/run/secrets/bootstrap.token\n")?;
+            write_file(
+                root,
+                "secrets/bootstrap.env",
+                &format!(
+                    "VAULT_ADDR=http://{}:{}\nTOKEN_PATH=/run/secrets/bootstrap.token\n",
+                    service.hostname, service.port
+                ),
+            )?;
         }
         DeceptionProfile::InternalApi => {
-            write_file(root, "api/config.json", "{\"upstream\":\"http://app.shadow.internal\",\"environment\":\"production\"}\n")?;
+            write_file(
+                root,
+                "api/config.json",
+                &format!(
+                    "{{\"endpoint\":\"http://{}:{}\",\"environment\":\"production\"}}\n",
+                    service.hostname, service.port
+                ),
+            )?;
         }
     }
 
@@ -289,10 +373,31 @@ fn write_file(root: &Path, relative: &str, value: &str) -> Result<(), std::io::E
         fs::create_dir_all(parent)?;
     }
     fs::write(&path, value)?;
-    restrict_file(&path)
+    make_session_file_writable(&path)
 }
 
-fn restrict_directory(path: &Path) -> Result<(), std::io::Error> {
+fn materialize_synthetic_etc(
+    root: &Path,
+    services: &[DeceptionService],
+) -> Result<(), std::io::Error> {
+    let mut hosts = String::from("127.0.0.1 localhost\n::1 localhost\n");
+    for service in services {
+        hosts.push_str(&format!("127.0.0.1 {}\n", service.hostname));
+    }
+
+    write_file(root, "etc/hosts", &hosts)?;
+    write_file(root, "etc/hostname", "prod-app-01\n")?;
+    write_file(root, "etc/nsswitch.conf", "hosts: files\npasswd: files\ngroup: files\n")?;
+    write_file(
+        root,
+        "etc/passwd",
+        "root:x:0:0:root:/root:/bin/bash\ndeploy:x:65533:65533:Deployment:/workspace/home:/bin/bash\n",
+    )?;
+    write_file(root, "etc/group", "root:x:0:\naudit-deception:x:65533:deploy\n")?;
+    Ok(())
+}
+
+fn restrict_staging_root(path: &Path) -> Result<(), std::io::Error> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -301,11 +406,23 @@ fn restrict_directory(path: &Path) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-fn restrict_file(path: &Path) -> Result<(), std::io::Error> {
+fn make_session_directory_writable(path: &Path) -> Result<(), std::io::Error> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o777))?;
+    }
+    Ok(())
+}
+
+fn make_session_file_writable(path: &Path) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        make_session_directory_writable(parent)?;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o666))?;
     }
     Ok(())
 }

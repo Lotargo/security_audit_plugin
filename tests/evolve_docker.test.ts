@@ -61,6 +61,54 @@ describeDocker('Evolve live Docker behavior pipeline', () => {
     expect(Object.keys(trace.process_lineage).length).toBeGreaterThan(0);
   }, 15_000);
 
+  it('runs a prepared synthetic shell surface under the deception identity', async () => {
+    const sessions = await bridge.getEvolveSessions();
+    const activeSession = sessions.sessions.find(
+      (session: any) => session.session_id !== 'runtime-default' && session.event_refs.length > 0
+    );
+    expect(activeSession).toBeTruthy();
+
+    const prepared = await bridge.prepareDeception(activeSession.session_id);
+    expect(prepared.instance.validated).toBe(true);
+    expect(prepared.runtime.services.length).toBeGreaterThan(0);
+
+    const identity = await bridge.execDeception('id -u', activeSession.session_id);
+    expect(identity.exit_code).toBe(0);
+    expect(identity.output.trim()).toBe('65533');
+
+    const surface = await bridge.execDeception(
+      'cat /workspace/manifest.json',
+      activeSession.session_id
+    );
+    expect(surface.exit_code).toBe(0);
+    expect(surface.output).toContain('"environment": "production"');
+
+    const service = prepared.runtime.services[0];
+    if (service.protocol === 'http') {
+      const synthetic = await bridge.execDeception(
+        `curl -fsS --connect-timeout 2 http://${service.bind_host}:${service.port}/`,
+        activeSession.session_id
+      );
+      expect(synthetic.exit_code).toBe(0);
+      expect(synthetic.output).toContain('"environment":"production"');
+      expect(synthetic.output).not.toContain('synthetic');
+    }
+
+    const management = await bridge.execDeception(
+      'curl -fsS --connect-timeout 1 --max-time 2 http://127.0.0.1:9999/health',
+      activeSession.session_id
+    );
+    expect(management.exit_code).not.toBe(0);
+
+    const external = await bridge.execDeception(
+      'curl -fsS --connect-timeout 1 --max-time 2 http://1.1.1.1/',
+      activeSession.session_id
+    );
+    expect(external.exit_code).not.toBe(0);
+
+    await bridge.destroyDeception(activeSession.session_id);
+  }, 20_000);
+
   it('keeps the runtime network boundary intact while Evolve observes behavior', async () => {
     const isolation = await bridge.request<{ is_isolated: boolean }>(
       'GET',

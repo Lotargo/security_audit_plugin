@@ -14,6 +14,7 @@ use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod auth;
+mod deception_exec;
 mod deception_runtime;
 mod evolve_events;
 mod routes;
@@ -234,6 +235,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route(
             "/evolve/deception/destroy",
             post(routes::evolve::handle_destroy_deception),
+        )
+        .route(
+            "/evolve/deception/exec",
+            post(routes::evolve::handle_deception_exec),
         )
         .route("/http_probe", post(routes::probe::handle_http_probe))
         .route(

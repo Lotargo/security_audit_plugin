@@ -4,6 +4,7 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use crate::deception_exec;
 use crate::deception_runtime::DeceptionRuntime;
 use sandbox_kernel::EvolveManager;
 
@@ -25,6 +26,13 @@ pub struct TraceQuery {
 #[derive(Debug, Deserialize)]
 pub struct DeceptionSessionRequest {
     pub session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeceptionExecRequest {
+    pub session_id: String,
+    pub command: String,
+    pub timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -220,4 +228,40 @@ pub async fn handle_destroy_deception(
         "runtime_destroyed": runtime_destroyed,
         "instance_destroyed": instance_destroyed
     })))
+}
+
+pub async fn handle_deception_exec(
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
+    Extension(deception_runtime): Extension<Arc<Mutex<DeceptionRuntime>>>,
+    Json(payload): Json<DeceptionExecRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let instance = {
+        let manager = evolve_mgr.lock().await;
+        manager.deception_instance(&payload.session_id).ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "deception instance not found"})),
+            )
+        })?
+    };
+
+    {
+        let runtime = deception_runtime.lock().await;
+        if runtime.status(&payload.session_id).is_none() {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(json!({"error": "deception services are not running for this session"})),
+            ));
+        }
+    }
+
+    deception_exec::execute(&instance, &payload.command, payload.timeout_secs.unwrap_or(30))
+        .await
+        .map(|result| Json(json!(result)))
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Deception execution failed: {}", error)})),
+            )
+        })
 }

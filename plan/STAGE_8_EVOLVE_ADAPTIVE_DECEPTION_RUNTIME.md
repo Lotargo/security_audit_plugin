@@ -274,7 +274,13 @@ Canary больше не должен напрямую вызывать KillSwit
 - отдельный `deception-service` binary;
 - запуск synthetic services через `setpriv` под UID/GID `audit-deception`;
 - статические HTTP, SSH-banner и PostgreSQL-auth decoy protocols;
-- authenticated prepare/status/destroy lifecycle routes для runtime validation.
+- authenticated prepare/status/destroy lifecycle routes для runtime validation;
+- `bubblewrap`-based synthetic shell surface с отдельными mount/PID/IPC/UTS namespaces;
+- synthetic `/workspace`, `/etc/hosts`, passwd/group/hostname вместо реальной workspace surface;
+- выполнение shell-команд после `setpriv` до UID/GID 65533;
+- resource limits через `prlimit`;
+- deception UID network access ограничен только TCP shadow range `18000-18999` на loopback;
+- live regression проверяет отсутствие доступа к daemon management port и внешнему egress.
 
 Автоматический redirect `HIGH -> ENGAGE -> DECEIVE` пока не включён. До появления безопасного redirect boundary HIGH/CRITICAL продолжают fail-closed через KillSwitch.
 

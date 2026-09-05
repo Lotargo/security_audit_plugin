@@ -71,6 +71,10 @@ describe('SandboxBridge Evolve correlation', () => {
     await bridge.getEvolveEvents(5000);
     await bridge.getEvolveSessions();
     await bridge.getEvolveTrace('session/test');
+    await bridge.prepareDeception('session/test');
+    await bridge.getDeceptionStatus('session/test');
+    await bridge.execDeception('whoami', 'session/test', 10);
+    await bridge.destroyDeception('session/test');
 
     expect(request).toHaveBeenCalledWith('POST', '/evolve/enable', { enabled: true });
     expect(request).toHaveBeenCalledWith('GET', '/evolve/status');
@@ -80,5 +84,20 @@ describe('SandboxBridge Evolve correlation', () => {
       'GET',
       '/evolve/trace?session_id=session%2Ftest'
     );
+    expect(request).toHaveBeenCalledWith('POST', '/evolve/deception/prepare', {
+      session_id: 'session/test',
+    });
+    expect(request).toHaveBeenCalledWith(
+      'GET',
+      '/evolve/deception/status?session_id=session%2Ftest'
+    );
+    expect(request).toHaveBeenCalledWith('POST', '/evolve/deception/exec', {
+      session_id: 'session/test',
+      command: 'whoami',
+      timeout_secs: 10,
+    });
+    expect(request).toHaveBeenCalledWith('POST', '/evolve/deception/destroy', {
+      session_id: 'session/test',
+    });
   });
 });

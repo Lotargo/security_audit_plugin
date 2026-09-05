@@ -83,6 +83,9 @@ fn planned_rules(
             "ip".into(),
             "daddr".into(),
             "127.0.0.0/8".into(),
+            "tcp".into(),
+            "dport".into(),
+            "18000-18999".into(),
             "accept".into(),
         ],
         vec![
@@ -92,6 +95,9 @@ fn planned_rules(
             "ip6".into(),
             "daddr".into(),
             "::1/128".into(),
+            "tcp".into(),
+            "dport".into(),
+            "18000-18999".into(),
             "accept".into(),
         ],
         vec![
@@ -287,7 +293,9 @@ mod tests {
             .any(|rule| rule == &format!("meta skuid {DECEPTION_EXEC_UID} tcp dport 9999 reject")));
         assert!(rendered
             .iter()
-            .any(|rule| rule == &format!("meta skuid {DECEPTION_EXEC_UID} ip daddr 127.0.0.0/8 accept")));
+            .any(|rule| rule == &format!(
+                "meta skuid {DECEPTION_EXEC_UID} ip daddr 127.0.0.0/8 tcp dport 18000-18999 accept"
+            )));
         assert!(rendered
             .iter()
             .any(|rule| rule == &format!("meta skuid {DECEPTION_EXEC_UID} reject")));

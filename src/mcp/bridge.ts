@@ -358,6 +358,43 @@ export class SandboxBridge {
     );
   }
 
+  public async prepareDeception(
+    sessionId: string = this.activeEvolveSessionId
+  ): Promise<any> {
+    return this.request('POST', '/evolve/deception/prepare', {
+      session_id: sessionId,
+    });
+  }
+
+  public async getDeceptionStatus(
+    sessionId: string = this.activeEvolveSessionId
+  ): Promise<any> {
+    return this.request(
+      'GET',
+      `/evolve/deception/status?session_id=${encodeURIComponent(sessionId)}`
+    );
+  }
+
+  public async execDeception(
+    command: string,
+    sessionId: string = this.activeEvolveSessionId,
+    timeoutSecs: number = 30
+  ): Promise<any> {
+    return this.request('POST', '/evolve/deception/exec', {
+      session_id: sessionId,
+      command,
+      timeout_secs: timeoutSecs,
+    });
+  }
+
+  public async destroyDeception(
+    sessionId: string = this.activeEvolveSessionId
+  ): Promise<any> {
+    return this.request('POST', '/evolve/deception/destroy', {
+      session_id: sessionId,
+    });
+  }
+
   public async exec(command: string, timeoutSecs: number = 60): Promise<ExecResult> {
     const raw = await this.request<DaemonExecResult>('POST', '/execute', {
       command,
