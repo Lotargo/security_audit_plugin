@@ -155,11 +155,7 @@ sandbox_runtime/
 
 ## 6.1. Текущий implementation status
 
-Рабочая ветка:
-
-```text
-stage-8-evolve-event-core
-```
+Stage 8 ведётся напрямую в `main`. История реализации отслеживается по коммитам.
 
 Текущее состояние:
 
@@ -187,8 +183,10 @@ stage-8-evolve-event-core
 - deterministic recommendations;
 - containment-first materialization of the inert `.deployment/prod/` deception surface;
 - recursive `inotifywait` telemetry for the deeper decoy;
-- MCP `sandbox_evolve_status` and `sandbox_evolve_observe`;
+- persistent trusted-host Evolve status/observe control methods;
 - emergency-isolation latch that forbids egress re-provisioning in the same runtime.
+
+Agent-facing MCP registration для Evolve удалена: подозрительный агент не может узнать Evolve state или записывать feedback observations.
 
 Эти возможности больше не используют отдельный Evolve controller. Они встроены как feedback/deception subsystem нового `EvolveManager`.
 
@@ -207,27 +205,25 @@ stage-8-evolve-event-core
 - conservative separation между credential interest и confirmed credential access;
 - decision layer использует effective contextual risk.
 
-Текущая политика до появления Deception Fabric:
+Текущая runtime policy:
 
 ```text
 LOW      -> OBSERVE
 MEDIUM   -> SUSPECT / enhanced telemetry
-HIGH     -> existing KillSwitch
-CRITICAL -> existing KillSwitch
+HIGH     -> containment-first ENGAGE -> DECEIVE
+CRITICAL -> terminal ISOLATE
 ```
-
-Это временный fail-closed режим. После Phase 8.3 безопасный `HIGH` path сможет переходить в `ENGAGE -> DECEIVE`.
 
 ### Validation status
 
-GitHub Actions для текущего PR создаёт jobs, но runner не назначается:
+GitHub Actions на `main` создаёт jobs, но runner пока не назначается:
 
 ```text
 runner_id: 0
 steps: []
 ```
 
-Поэтому CI сейчас завершается до checkout и не выполняет Rust/TypeScript/Docker код. Unit и live regression tests уже добавлены в ветку и должны быть прогнаны до merge при восстановлении runner availability.
+Поэтому CI завершается до checkout и пока не выполняет Rust/TypeScript/Docker код. Unit и live regression tests находятся в `main` и должны быть прогнаны при восстановлении runner availability.
 
 ---
 
@@ -372,20 +368,13 @@ ISOLATE_SESSION
 - `MutationController`;
 - запрет автоматического расширения capability и RoE.
 
-### Phase 8.7 - MCP and Observability
+### Phase 8.7 - Trusted Observability
 
-Добавить управляющий MCP surface:
+Добавить trusted host/operator observability surface для status, sessions, events, policy и export.
 
-```text
-sandbox_evolve_enable
-sandbox_evolve_status
-sandbox_evolve_sessions
-sandbox_evolve_events
-sandbox_evolve_policy
-sandbox_evolve_export
-```
+Default agent-facing MCP `tools/list` не должен содержать Evolve state, feedback или deception lifecycle tools.
 
-Evolve должен продолжать работать внутри daemon/kernel независимо от MCP polling.
+Evolve должен продолжать работать внутри daemon/kernel независимо от host polling.
 
 ### Phase 8.8 - Kernel Telemetry Expansion
 
@@ -439,6 +428,6 @@ Stage 8 завершён, когда:
 12. Evolve не может расширить исходный RoE;
 13. KillSwitch доступен из любого Evolve state;
 14. ошибки Evolve обрабатываются fail-closed;
-15. MCP предоставляет управление и observability, но не является Evolve controller;
+15. trusted host/operator control plane предоставляет управление и observability, а agent-facing MCP не раскрывает Evolve state;
 16. Stage 8 tests проходят в CI;
 17. существующие security boundary regression tests проходят без регрессий.

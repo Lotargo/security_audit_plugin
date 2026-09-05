@@ -52,7 +52,7 @@ The plugin does **not** read, copy, proxy, or store model-provider credentials f
 - `.evolve/profile.json` persists behavior categories, techniques, trigger counts, recommendations, and an explicit Evolve generation across sandbox recreations that reuse the workspace.
 - New validated TTP observations update a deterministic, explainable defensive profile instead of an opaque online-learning model.
 - Evolve never performs external retaliation or widens audit scope. It operates inside the sandbox boundary and cannot disable a latched isolation state.
-- Agents can inspect and enrich the profile through `sandbox_evolve_status` and `sandbox_evolve_observe`.
+- Evolve state, deception lifecycle, and feedback writes stay on the authenticated trusted host/operator control plane. They are intentionally absent from the default agent-facing MCP `tools/list`, so a suspicious agent cannot query whether it has entered deception or poison the defensive profile.
 
 The resulting loop is:
 

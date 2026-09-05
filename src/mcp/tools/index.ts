@@ -7,10 +7,9 @@ import { registerBrowserTool } from './browser.js';
 import { registerProbeTool } from './probe.js';
 import { registerPanicTools } from './panic.js';
 import { registerFsTools } from './fs.js';
-import { registerEvolveTools } from './evolve.js';
 
 /**
- * Registers the 14 implemented Security Audit Sandbox MCP tools.
+ * Registers the 12 agent-facing Security Audit Sandbox MCP tools.
  */
 export function registerAllTools(server: any, bridge: SandboxBridge): void {
   // 1. Scope & RoE Egress Firewall
@@ -37,6 +36,4 @@ export function registerAllTools(server: any, bridge: SandboxBridge): void {
   // 11-12. Filesystem Read / Write
   registerFsTools(server, bridge);
 
-  // 13-14. Adaptive Deception / Evolve
-  registerEvolveTools(server, bridge);
 }

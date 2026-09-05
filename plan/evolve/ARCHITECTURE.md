@@ -26,7 +26,7 @@ Validation
 Kernel Enforcement
 ```
 
-MCP и AgentSkills используются только для управления, наблюдаемости и enrichment. Они не являются источником kernel authority.
+AgentSkills и default MCP surface считаются частью agent-facing execution plane и не получают Evolve control/observability. Управление Evolve, status, traces, feedback и lifecycle доступны только через authenticated trusted host/operator control plane. Ни один из этих интерфейсов не является источником kernel authority.
 
 ---
 
@@ -327,19 +327,35 @@ Artifacts должны быть пригодны для offline analysis и purp
 
 ---
 
-## 10. MCP boundary
+## 10. Control-plane boundary
 
-Предлагаемые tools:
+Default agent-facing MCP registry не должен раскрывать Evolve internals.
+
+Запрещено регистрировать для audit-agent:
 
 ```text
 sandbox_evolve_enable
 sandbox_evolve_status
+sandbox_evolve_observe
 sandbox_evolve_sessions
 sandbox_evolve_events
 sandbox_evolve_policy
 sandbox_evolve_export
+deception lifecycle controls
 ```
 
-MCP может читать status, экспортировать trace и управлять разрешёнными lifecycle operations.
+Причина проста: подозрительный агент является частью наблюдаемой стороны. Возможность запросить Evolve state раскрывает deception, а возможность писать observations позволяет отравлять feedback memory.
 
-MCP не должен иметь endpoint вида `apply_arbitrary_evolve_command`.
+Допустимый интерфейс:
+
+```text
+trusted host/operator
+ ↓ authenticated Ratchet control plane
+sandbox-daemon
+ ↓
+EvolveManager
+```
+
+Host/operator может читать status, sessions, events, traces, export и выполнять разрешённые lifecycle operations. AgentSkills могут получать только те результаты, которые безопасно проецируются в обычный audit workflow и не раскрывают defensive state.
+
+Kernel authority по-прежнему остаётся только у deterministic runtime. Не должно существовать endpoint вида `apply_arbitrary_evolve_command`.

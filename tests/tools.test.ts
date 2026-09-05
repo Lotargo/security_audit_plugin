@@ -40,11 +40,11 @@ describe('MCP Tools Registration & Dispatch Test Suite', () => {
       'sandbox_reset',
       'sandbox_fs_read',
       'sandbox_fs_write',
-      'sandbox_evolve_status',
-      'sandbox_evolve_observe',
     ];
 
     expect(registeredTools.size).toBe(expectedTools.length);
+    expect(registeredTools.has('sandbox_evolve_status')).toBe(false);
+    expect(registeredTools.has('sandbox_evolve_observe')).toBe(false);
     for (const toolName of expectedTools) {
       expect(registeredTools.has(toolName)).toBe(true);
       const toolDef = registeredTools.get(toolName)!;
@@ -122,46 +122,6 @@ describe('MCP Tools Registration & Dispatch Test Suite', () => {
       expect(res.content[0].type).toBe('text');
       expect(res.content[0].text).toContain('EMERGENCY KILL SWITCH ENGAGED');
       expect(res.content[0].text).toContain('Canary tripwire breached');
-    });
-
-    it('sandbox_evolve_status exposes deterministic behavior memory', async () => {
-      vi.spyOn(mockBridge, 'evolveStatus').mockResolvedValue({
-        phase: 'adapted',
-        generation: 3,
-        trigger_count: 1,
-        observation_count: 2,
-        patterns: { 'credential_access:ssh_key_discovery': 2 },
-        recommendations: ['Review SSH trust boundaries'],
-      });
-
-      const tool = registeredTools.get('sandbox_evolve_status')!;
-      const res = await tool.handler({});
-      const parsed = JSON.parse(res.content[0].text);
-
-      expect(parsed.phase).toBe('adapted');
-      expect(parsed.generation).toBe(3);
-      expect(parsed.patterns['credential_access:ssh_key_discovery']).toBe(2);
-    });
-
-    it('sandbox_evolve_observe forwards validated TTP observations', async () => {
-      const spy = vi.spyOn(mockBridge, 'evolveObserve').mockResolvedValue({
-        status: 'recorded',
-        event: { category: 'discovery', technique: 'decoy_surface_interaction' },
-      });
-
-      const tool = registeredTools.get('sandbox_evolve_observe')!;
-      const args = {
-        category: 'discovery',
-        technique: 'decoy_surface_interaction',
-        evidence: 'Decoy deployment manifest was opened',
-        severity: 5,
-        path: '/workspace/.deployment/prod/manifest.json',
-      };
-      const res = await tool.handler(args);
-
-      expect(res.isError).toBeUndefined();
-      expect(spy).toHaveBeenCalledWith(args);
-      expect(res.content[0].text).toContain('recorded');
     });
 
     it('sandbox_fs_write and sandbox_fs_read handle safe workspace files', async () => {

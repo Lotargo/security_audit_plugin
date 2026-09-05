@@ -1,3 +1,10 @@
+/**
+ * Trusted operator-only Evolve tool definitions.
+ *
+ * IMPORTANT: this module is intentionally NOT registered by registerAllTools().
+ * The default MCP server is agent-facing, so exposing Evolve state or allowing
+ * feedback writes there would reveal the deception boundary and permit profile poisoning.
+ */
 import { z } from 'zod';
 import { SandboxBridge } from '../bridge.js';
 
@@ -34,7 +41,7 @@ export const EvolveObserveSchema = z.object({
     .describe('Optional in-sandbox artifact path associated with the observation'),
 });
 
-export function registerEvolveTools(server: any, bridge: SandboxBridge) {
+export function registerTrustedEvolveTools(server: any, bridge: SandboxBridge) {
   server.tool(
     'sandbox_evolve_status',
     'Returns the current Evolve adaptive-deception generation, observed behavior patterns, and deterministic defensive recommendations.',
