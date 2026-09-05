@@ -320,7 +320,8 @@ export class SandboxBridge {
   }
 
   public async getEvolveEvents(limit: number = 100): Promise<any> {
-    const boundedLimit = Math.max(1, Math.min(1000, Math.trunc(limit)));
+    const normalizedLimit = Number.isFinite(limit) ? Math.trunc(limit) : 100;
+    const boundedLimit = Math.max(1, Math.min(1000, normalizedLimit));
     return this.request('GET', `/evolve/events?limit=${boundedLimit}`);
   }
 
