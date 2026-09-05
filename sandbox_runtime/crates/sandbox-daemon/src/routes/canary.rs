@@ -11,6 +11,7 @@ use sandbox_kernel::canary::CanaryManager;
 #[derive(Debug, Deserialize)]
 pub struct ArmCanaryRequest {
     pub base_dir: Option<String>,
+    pub evolve_session_id: Option<String>,
 }
 
 pub async fn handle_arm_canary(
@@ -24,7 +25,10 @@ pub async fn handle_arm_canary(
     );
 
     let mut mgr = canary_mgr.lock().await;
-    match mgr.arm_canaries(&base_path).await {
+    match mgr
+        .arm_canaries_for_session(&base_path, payload.evolve_session_id)
+        .await
+    {
         Ok(traps) => {
             let traps_summary: Vec<_> = traps
                 .iter()
