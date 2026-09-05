@@ -4,8 +4,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::fs;
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, info};
 
+use crate::evolve::{EventSource, RiskLevel, SecurityEvent, SecurityEventType};
 use crate::panic::KillSwitch;
 
 #[derive(Error, Debug)]
@@ -27,6 +29,7 @@ pub struct CanaryManager {
     traps: Vec<CanaryTrap>,
     is_armed: Arc<AtomicBool>,
     triggered_count: Arc<AtomicUsize>,
+    event_sender: Option<UnboundedSender<SecurityEvent>>,
 }
 
 impl Default for CanaryManager {
@@ -41,10 +44,21 @@ impl CanaryManager {
             traps: Vec::new(),
             is_armed: Arc::new(AtomicBool::new(false)),
             triggered_count: Arc::new(AtomicUsize::new(0)),
+            event_sender: None,
         }
     }
 
-    /// Plants deceptive honeytoken files into the target filesystem
+    /// Creates a canary manager whose trip events are delegated to the Evolve event pipeline.
+    ///
+    /// If the receiver disappears, canary handling fails closed and falls back to KillSwitch.
+    pub fn with_event_sender(event_sender: UnboundedSender<SecurityEvent>) -> Self {
+        Self {
+            event_sender: Some(event_sender),
+            ..Self::new()
+        }
+    }
+
+    /// Plants deceptive honeytoken files into the target filesystem.
     pub async fn arm_canaries(&mut self, base_dir: &Path) -> Result<Vec<CanaryTrap>, CanaryError> {
         let mut planted = Vec::new();
 
@@ -144,7 +158,6 @@ users:
         self.traps = planted.clone();
         self.is_armed.store(true, Ordering::SeqCst);
 
-        // Spawn background file access monitor
         self.spawn_watcher(planted.clone());
 
         info!("Armed {} canary honeytoken tripwires.", planted.len());
@@ -154,24 +167,34 @@ users:
     fn spawn_watcher(&self, traps: Vec<CanaryTrap>) {
         let is_armed = self.is_armed.clone();
         let triggered_count = self.triggered_count.clone();
+        let event_sender = self.event_sender.clone();
 
         tokio::spawn(async move {
-            info!("Canary inotify/access watcher loop started.");
+            info!("Canary metadata watcher loop started.");
 
-            // Record initial metadata timestamps and size
-            let mut initial_meta: Vec<(PathBuf, u64, Option<std::time::SystemTime>)> = Vec::new();
+            // Phase 8.1 keeps the existing metadata polling source and decouples its reaction.
+            // EVENT_MODEL.md tracks the later migration to fanotify/inotify.
+            let mut initial_meta: Vec<(
+                PathBuf,
+                String,
+                u64,
+                Option<std::time::SystemTime>,
+            )> = Vec::new();
             for trap in &traps {
                 if let Ok(meta) = std::fs::metadata(&trap.file_path) {
-                    let len = meta.len();
-                    let accessed = meta.accessed().ok();
-                    initial_meta.push((trap.file_path.clone(), len, accessed));
+                    initial_meta.push((
+                        trap.file_path.clone(),
+                        trap.trap_type.clone(),
+                        meta.len(),
+                        meta.accessed().ok(),
+                    ));
                 }
             }
 
             while is_armed.load(Ordering::SeqCst) {
                 tokio::time::sleep(Duration::from_millis(500)).await;
 
-                for (path, orig_len, orig_accessed) in &initial_meta {
+                for (path, trap_type, orig_len, orig_accessed) in &initial_meta {
                     if let Ok(meta) = std::fs::metadata(path) {
                         let current_len = meta.len();
                         let current_accessed = meta.accessed().ok();
@@ -183,10 +206,12 @@ users:
                         };
 
                         if modified || accessed {
-                            triggered_count.fetch_add(1, Ordering::SeqCst);
-                            error!("TRIPWIRE TRIGGERED! Unauthorized access or modification on canary: {:?}", path);
-                            let _ =
-                                KillSwitch::trigger(&format!("Canary trap triggered: {:?}", path));
+                            handle_canary_trigger(
+                                event_sender.as_ref(),
+                                triggered_count.as_ref(),
+                                path,
+                                trap_type,
+                            );
                             is_armed.store(false, Ordering::SeqCst);
                             return;
                         }
@@ -209,10 +234,44 @@ users:
     }
 }
 
+fn handle_canary_trigger(
+    event_sender: Option<&UnboundedSender<SecurityEvent>>,
+    triggered_count: &AtomicUsize,
+    path: &Path,
+    trap_type: &str,
+) {
+    triggered_count.fetch_add(1, Ordering::SeqCst);
+    error!(
+        "TRIPWIRE TRIGGERED! Unauthorized access or modification on canary: {:?}",
+        path
+    );
+
+    let event = SecurityEvent::new(EventSource::Canary, SecurityEventType::CanaryAccess)
+        .with_resource(path.to_string_lossy().into_owned())
+        .with_risk_hint(RiskLevel::High)
+        .with_metadata(serde_json::json!({
+            "trap_type": trap_type,
+            "legacy_reaction": "isolate"
+        }));
+
+    if let Some(sender) = event_sender {
+        if sender.send(event).is_ok() {
+            return;
+        }
+
+        error!("Evolve event receiver unavailable; falling back to emergency isolation.");
+    }
+
+    // Compatibility/failure fallback. The daemon uses the event-driven path, but a standalone
+    // CanaryManager without an Evolve receiver must preserve the old fail-closed behavior.
+    let _ = KillSwitch::trigger(&format!("Canary trap triggered: {:?}", path));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    use tokio::sync::mpsc;
 
     #[tokio::test]
     async fn test_arm_canaries() {
@@ -227,5 +286,26 @@ mod tests {
         for trap in &traps {
             assert!(trap.file_path.exists());
         }
+    }
+
+    #[tokio::test]
+    async fn trigger_emits_evolve_event_when_receiver_exists() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let triggered_count = AtomicUsize::new(0);
+        let path = Path::new("/workspace/.env.decoy");
+
+        handle_canary_trigger(
+            Some(&sender),
+            &triggered_count,
+            path,
+            "env_secrets",
+        );
+
+        let event = receiver.recv().await.expect("expected canary event");
+        assert_eq!(triggered_count.load(Ordering::SeqCst), 1);
+        assert_eq!(event.source, EventSource::Canary);
+        assert_eq!(event.event_type, SecurityEventType::CanaryAccess);
+        assert_eq!(event.resource.as_deref(), Some("/workspace/.env.decoy"));
+        assert_eq!(event.risk_hint, Some(RiskLevel::High));
     }
 }
