@@ -100,6 +100,7 @@ jobs:
         run: |
           npx vitest run tests/docker_roundtrip.test.ts
           npx vitest run tests/docker_security_hardening.test.ts
+          npx vitest run tests/evolve_docker.test.ts
 
       - name: Dump sandbox diagnostics on failure
         if: failure()
