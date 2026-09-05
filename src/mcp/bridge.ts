@@ -1,6 +1,7 @@
 import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { RatchetBridge } from './security/ratchet_bridge.js';
 import { JailGuard } from './security/jail.js';
 import {
@@ -93,6 +94,7 @@ export class SandboxBridge {
     targetHosts: [],
     proxy: null,
   };
+  private activeEvolveSessionId: string = randomUUID();
 
   constructor(options?: {
     workspaceRoot?: string;
@@ -262,6 +264,7 @@ export class SandboxBridge {
     };
 
     const egressRes = await this.request('POST', '/provision_egress', payload);
+    this.activeEvolveSessionId = randomUUID();
     this.activeNetworkScope = {
       mode: options.mode,
       targetHosts,
@@ -312,6 +315,7 @@ export class SandboxBridge {
     const raw = await this.request<DaemonExecResult>('POST', '/execute', {
       command,
       timeout_secs: timeoutSecs,
+      evolve_session_id: this.activeEvolveSessionId,
     });
     return {
       exit_code: raw.exit_code,
@@ -333,7 +337,11 @@ export class SandboxBridge {
     command: string,
     session: string = 'background_scan'
   ): Promise<{ status: string; session: string; message: string }> {
-    return this.request('POST', '/start_background', { command, session });
+    return this.request('POST', '/start_background', {
+      command,
+      session,
+      evolve_session_id: this.activeEvolveSessionId,
+    });
   }
 
   public async pollLogs(
@@ -361,6 +369,7 @@ export class SandboxBridge {
       ...options,
       proxy: networkPolicy.useTor ? TOR_BROWSER_PROXY : null,
       allowed_hosts: networkPolicy.allowedHosts,
+      evolve_session_id: this.activeEvolveSessionId,
     });
   }
 
@@ -374,6 +383,7 @@ export class SandboxBridge {
       body: options.body || '',
       proxy: networkPolicy.useTor ? TOR_HTTP_PROXY : null,
       allowed_hosts: networkPolicy.allowedHosts,
+      evolve_session_id: this.activeEvolveSessionId,
     });
   }
 
@@ -391,8 +401,11 @@ export class SandboxBridge {
     }
   }
 
-  public async armCanary(tokenLabel: string = 'default_audit_canary'): Promise<any> {
-    return this.request('POST', '/arm_canary', { token_label: tokenLabel });
+  public async armCanary(baseDir: string = '/workspace'): Promise<any> {
+    return this.request('POST', '/arm_canary', {
+      base_dir: baseDir,
+      evolve_session_id: this.activeEvolveSessionId,
+    });
   }
 
   public fsRead(relPath: string): { path: string; content: string } {
@@ -422,6 +435,7 @@ export class SandboxBridge {
       await this.killSwitch('Reset called');
     }
     this.activeNetworkScope = { mode: 'local', targetHosts: [], proxy: null };
+    this.activeEvolveSessionId = randomUUID();
     return { status: 'ok', message: 'Sandbox instance cleanly reset' };
   }
 }
