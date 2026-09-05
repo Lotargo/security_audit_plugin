@@ -15,6 +15,7 @@ pub enum BehaviorTag {
     Execution,
     Discovery,
     CredentialInterest,
+    CredentialAccess,
     NetworkActivity,
     BrowserActivity,
     PolicyBoundary,
@@ -202,7 +203,10 @@ fn classify_event(event: &SecurityEvent) -> Vec<BehaviorTag> {
         | SecurityEventType::ProcessExec
         | SecurityEventType::ProcessExit => tags.push(BehaviorTag::Execution),
         SecurityEventType::Discovery => tags.push(BehaviorTag::Discovery),
-        SecurityEventType::CredentialAccess => tags.push(BehaviorTag::CredentialInterest),
+        SecurityEventType::CredentialAccess => {
+            tags.push(BehaviorTag::CredentialInterest);
+            tags.push(BehaviorTag::CredentialAccess);
+        },
         SecurityEventType::NetworkConnect
         | SecurityEventType::NetworkListen
         | SecurityEventType::DnsAttempt
@@ -215,6 +219,7 @@ fn classify_event(event: &SecurityEvent) -> Vec<BehaviorTag> {
         SecurityEventType::CanaryAccess => {
             tags.push(BehaviorTag::CanaryInteraction);
             tags.push(BehaviorTag::CredentialInterest);
+            tags.push(BehaviorTag::CredentialAccess);
         }
         SecurityEventType::EscapeAttempt | SecurityEventType::ControlPlaneAccess => {
             tags.push(BehaviorTag::EscapeActivity);
@@ -280,16 +285,22 @@ fn sequence_risk(
     let previous_tags = &trace.tags;
     let discovery_then_network = previous_tags.contains(&BehaviorTag::Discovery)
         && current_tags.contains(&BehaviorTag::NetworkActivity);
-    let credential_then_network = previous_tags.contains(&BehaviorTag::CredentialInterest)
+    let credential_access_then_network = previous_tags.contains(&BehaviorTag::CredentialAccess)
         && current_tags.contains(&BehaviorTag::NetworkActivity);
+    let credential_interest_then_network =
+        previous_tags.contains(&BehaviorTag::CredentialInterest)
+            && current_tags.contains(&BehaviorTag::NetworkActivity);
     let repeated_policy_boundary = previous_tags.contains(&BehaviorTag::PolicyBoundary)
         && current_tags.contains(&BehaviorTag::PolicyBoundary);
 
-    if credential_then_network {
+    if credential_access_then_network {
         return RiskLevel::High;
     }
 
-    if discovery_then_network || repeated_policy_boundary {
+    if discovery_then_network
+        || credential_interest_then_network
+        || repeated_policy_boundary
+    {
         return RiskLevel::Medium;
     }
 
@@ -324,13 +335,30 @@ mod tests {
     }
 
     #[test]
-    fn credential_interest_followed_by_network_activity_is_high_risk() {
+    fn credential_interest_followed_by_network_activity_is_medium_risk() {
         let mut profiler = BehaviorProfiler::new();
 
         let credential =
             SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
                 .with_session_id("session-a")
                 .with_command("cat ~/.ssh/id_rsa");
+        let network =
+            SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
+                .with_session_id("session-a")
+                .with_command("curl https://example.com");
+
+        profiler.observe(&credential);
+        assert_eq!(profiler.observe(&network).risk_level, RiskLevel::Medium);
+    }
+
+    #[test]
+    fn confirmed_credential_access_followed_by_network_activity_is_high_risk() {
+        let mut profiler = BehaviorProfiler::new();
+
+        let credential =
+            SecurityEvent::new(EventSource::Filesystem, SecurityEventType::CredentialAccess)
+                .with_session_id("session-a")
+                .with_resource("/workspace/secret");
         let network =
             SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
                 .with_session_id("session-a")
