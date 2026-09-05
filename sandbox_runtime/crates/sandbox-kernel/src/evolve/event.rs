@@ -125,6 +125,37 @@ impl SecurityEvent {
         self
     }
 
+    pub fn with_destination(mut self, destination: impl Into<String>) -> Self {
+        self.destination = Some(destination.into());
+        self
+    }
+
+    pub fn with_command(mut self, command: impl Into<String>) -> Self {
+        self.command = Some(command.into());
+        self
+    }
+
+    pub fn with_arguments(mut self, arguments: Vec<String>) -> Self {
+        self.arguments = arguments;
+        self
+    }
+
+    pub fn with_result(mut self, result: impl Into<String>) -> Self {
+        self.result = Some(result.into());
+        self
+    }
+
+    pub fn with_process(mut self, process_id: u32, parent_process_id: Option<u32>) -> Self {
+        self.process_id = Some(process_id);
+        self.parent_process_id = parent_process_id;
+        self
+    }
+
+    pub fn with_uid(mut self, uid: u32) -> Self {
+        self.uid = Some(uid);
+        self
+    }
+
     pub fn with_risk_hint(mut self, risk: RiskLevel) -> Self {
         self.risk_hint = Some(risk);
         self
