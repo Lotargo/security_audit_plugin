@@ -168,4 +168,25 @@ mod tests {
         assert!(validate_agent_allowlist(&config, &["198.51.100.9/32".to_string()]).is_err());
         assert!(validate_agent_allowlist(&config, &["not-a-cidr".to_string()]).is_err());
     }
+
+    #[tokio::test]
+    async fn egress_cannot_be_reopened_while_emergency_isolation_is_latched() {
+        KillSwitch::reset_isolation();
+        KillSwitch::trigger("unit test isolation latch").unwrap();
+
+        let result = handle_provision_egress(Json(ProvisionEgressRequest {
+            config: EgressConfig::default(),
+            agent_allowed_cidrs: Vec::new(),
+        }))
+        .await;
+
+        let (status, body) = result.expect_err("latched isolation must reject egress provisioning");
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body.0["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Recreate/reset"));
+
+        KillSwitch::reset_isolation();
+    }
 }
