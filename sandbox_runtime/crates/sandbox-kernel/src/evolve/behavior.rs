@@ -1,6 +1,6 @@
 use super::{RiskLevel, SecurityEvent, SecurityEventType};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 const DEFAULT_TRACE_EVENT_CAPACITY: usize = 256;
 const DEFAULT_SESSION_ID: &str = "runtime-default";
@@ -28,6 +28,7 @@ pub enum BehaviorTag {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BehaviorAssessment {
     pub risk_level: RiskLevel,
+    pub risk_score: u8,
     pub tags: Vec<BehaviorTag>,
 }
 
@@ -37,7 +38,11 @@ pub struct BehaviorTrace {
     pub started_at_ms: u64,
     pub last_event_at_ms: u64,
     pub risk_level: RiskLevel,
+    pub risk_score: u8,
     pub tags: BTreeSet<BehaviorTag>,
+    pub process_lineage: BTreeMap<u32, Option<u32>>,
+    pub resources: BTreeSet<String>,
+    pub destinations: BTreeSet<String>,
     pub events: VecDeque<SecurityEvent>,
     #[serde(skip, default = "default_trace_event_capacity")]
     event_capacity: usize,
@@ -50,7 +55,11 @@ impl BehaviorTrace {
             started_at_ms: first_timestamp_ms,
             last_event_at_ms: first_timestamp_ms,
             risk_level: RiskLevel::Low,
+            risk_score: risk_score(RiskLevel::Low),
             tags: BTreeSet::new(),
+            process_lineage: BTreeMap::new(),
+            resources: BTreeSet::new(),
+            destinations: BTreeSet::new(),
             events: VecDeque::with_capacity(event_capacity),
             event_capacity,
         }
@@ -106,6 +115,19 @@ impl BehaviorProfiler {
         }
         if effective_risk.rank() > trace.risk_level.rank() {
             trace.risk_level = effective_risk;
+            trace.risk_score = risk_score(effective_risk);
+        }
+
+        if let Some(process_id) = event.process_id {
+            trace
+                .process_lineage
+                .insert(process_id, event.parent_process_id);
+        }
+        if let Some(resource) = event.resource.as_ref() {
+            trace.resources.insert(resource.clone());
+        }
+        if let Some(destination) = event.destination.as_ref() {
+            trace.destinations.insert(destination.clone());
         }
 
         let mut normalized_event = event.clone();
@@ -117,6 +139,7 @@ impl BehaviorProfiler {
 
         BehaviorAssessment {
             risk_level: effective_risk,
+            risk_score: risk_score(effective_risk),
             tags,
         }
     }
@@ -133,6 +156,15 @@ impl BehaviorProfiler {
         let mut traces: Vec<_> = self.traces.values().cloned().collect();
         traces.sort_by(|left, right| left.started_at_ms.cmp(&right.started_at_ms));
         traces
+    }
+}
+
+fn risk_score(level: RiskLevel) -> u8 {
+    match level {
+        RiskLevel::Low => 10,
+        RiskLevel::Medium => 45,
+        RiskLevel::High => 80,
+        RiskLevel::Critical => 100,
     }
 }
 
@@ -309,13 +341,32 @@ mod tests {
     }
 
     #[test]
+    fn trace_collects_process_resource_and_destination_lineage() {
+        let mut profiler = BehaviorProfiler::new();
+        let event = SecurityEvent::new(EventSource::Network, SecurityEventType::NetworkConnect)
+            .with_session_id("session-a")
+            .with_process(42, Some(7))
+            .with_resource("/workspace/tool.sh")
+            .with_destination("203.0.113.7:443");
+
+        profiler.observe(&event);
+
+        let trace = profiler.trace("session-a").expect("trace should exist");
+        assert_eq!(trace.process_lineage.get(&42), Some(&Some(7)));
+        assert!(trace.resources.contains("/workspace/tool.sh"));
+        assert!(trace.destinations.contains("203.0.113.7:443"));
+    }
+
+    #[test]
     fn control_plane_access_is_always_critical() {
         let mut profiler = BehaviorProfiler::new();
         let event =
             SecurityEvent::new(EventSource::Policy, SecurityEventType::ControlPlaneAccess)
                 .with_session_id("session-a");
 
-        assert_eq!(profiler.observe(&event).risk_level, RiskLevel::Critical);
+        let assessment = profiler.observe(&event);
+        assert_eq!(assessment.risk_level, RiskLevel::Critical);
+        assert_eq!(assessment.risk_score, 100);
     }
 
     #[test]
