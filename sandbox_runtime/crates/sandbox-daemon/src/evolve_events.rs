@@ -31,3 +31,32 @@ impl EvolveEventSink {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sandbox_kernel::{EventSource, SecurityEventType};
+    use tokio::sync::mpsc;
+
+    #[test]
+    fn sink_delivers_event_to_receiver() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let sink = EvolveEventSink::new(sender);
+        let event =
+            SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec);
+
+        assert!(sink.emit(event));
+        assert!(receiver.try_recv().is_ok());
+    }
+
+    #[test]
+    fn sink_reports_closed_receiver_without_panicking() {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        drop(receiver);
+        let sink = EvolveEventSink::new(sender);
+        let event =
+            SecurityEvent::new(EventSource::System, SecurityEventType::PolicyViolation);
+
+        assert!(!sink.emit(event));
+    }
+}
