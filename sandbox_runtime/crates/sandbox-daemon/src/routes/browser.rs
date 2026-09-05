@@ -1,4 +1,4 @@
-use axum::{http::StatusCode, Json};
+use axum::{http::StatusCode, Extension, Json};
 use serde_json::Value;
 use std::process::Stdio;
 use std::time::Duration;
@@ -6,7 +6,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tracing::{error, info};
 
+use crate::evolve_events::EvolveEventSink;
 use sandbox_kernel::browser_exec_identity;
+use sandbox_kernel::{EventSource, RiskLevel, SecurityEvent, SecurityEventType};
 
 const SAFE_CHILD_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const TOR_BROWSER_PROXY: &str = "socks5://127.0.0.1:9050";
@@ -44,6 +46,55 @@ fn has_forbidden_authority_header(config: &Value) -> bool {
     })
 }
 
+fn evolve_session_id(config: &Value) -> Option<&str> {
+    config.get("evolve_session_id").and_then(Value::as_str)
+}
+
+fn requested_url(config: &Value) -> Option<&str> {
+    config.get("url").and_then(Value::as_str)
+}
+
+fn emit_browser_event(
+    event_sink: &EvolveEventSink,
+    config: &Value,
+    event_type: SecurityEventType,
+    risk: RiskLevel,
+    result: &str,
+) {
+    let mut event = SecurityEvent::new(EventSource::Browser, event_type)
+        .with_result(result.to_string())
+        .with_risk_hint(risk);
+
+    if let Some(session_id) = evolve_session_id(config) {
+        event = event.with_session_id(session_id.to_string());
+    }
+    if let Some(url) = requested_url(config) {
+        event = event.with_destination(url.to_string());
+    }
+
+    event_sink.emit(event);
+}
+
+fn emit_browser_policy_violation(
+    event_sink: &EvolveEventSink,
+    config: &Value,
+    reason: &str,
+) {
+    let mut event = SecurityEvent::new(EventSource::Policy, SecurityEventType::PolicyViolation)
+        .with_resource("browser_audit")
+        .with_result(reason.to_string())
+        .with_risk_hint(RiskLevel::Medium);
+
+    if let Some(session_id) = evolve_session_id(config) {
+        event = event.with_session_id(session_id.to_string());
+    }
+    if let Some(url) = requested_url(config) {
+        event = event.with_destination(url.to_string());
+    }
+
+    event_sink.emit(event);
+}
+
 fn proxy_is_managed_tor(config: &Value) -> bool {
     config
         .get("proxy")
@@ -55,9 +106,15 @@ fn proxy_is_managed_tor(config: &Value) -> bool {
 }
 
 pub async fn handle_browser_audit(
+    Extension(event_sink): Extension<EvolveEventSink>,
     Json(config): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if !has_scope_hosts(&config) {
+        emit_browser_policy_violation(
+            &event_sink,
+            &config,
+            "browser request missing explicit RoE host allowlist",
+        );
         return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
@@ -66,6 +123,11 @@ pub async fn handle_browser_audit(
         ));
     }
     if has_proxy(&config) && !proxy_is_managed_tor(&config) {
+        emit_browser_policy_violation(
+            &event_sink,
+            &config,
+            "browser attempted unmanaged proxy transport",
+        );
         return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
@@ -74,6 +136,11 @@ pub async fn handle_browser_audit(
         ));
     }
     if has_forbidden_authority_header(&config) {
+        emit_browser_policy_violation(
+            &event_sink,
+            &config,
+            "browser attempted Host/:authority override",
+        );
         return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
@@ -81,6 +148,14 @@ pub async fn handle_browser_audit(
             })),
         ));
     }
+
+    emit_browser_event(
+        &event_sink,
+        &config,
+        SecurityEventType::BrowserNavigation,
+        RiskLevel::Low,
+        "started",
+    );
 
     let config_bytes = serde_json::to_vec(&config).map_err(|e| {
         (
@@ -162,6 +237,13 @@ pub async fn handle_browser_audit(
         )
     })?;
 
+    emit_browser_event(
+        &event_sink,
+        &config,
+        SecurityEventType::BrowserNavigation,
+        RiskLevel::Low,
+        "completed",
+    );
     info!("Browser audit completed successfully");
     Ok(Json(report))
 }
