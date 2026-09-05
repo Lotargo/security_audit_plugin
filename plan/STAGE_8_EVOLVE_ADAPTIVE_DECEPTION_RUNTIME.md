@@ -269,7 +269,12 @@ Canary больше не должен напрямую вызывать KillSwit
 - session-scoped synthetic filesystem root;
 - deterministic profile selection на основе `BehaviorTrace`;
 - loopback-only planned synthetic service descriptors;
-- validation, запрещающую unsafe session paths и non-loopback service endpoints.
+- validation, запрещающую unsafe session paths и non-loopback service endpoints;
+- hidden staging permissions для prepared filesystem surface;
+- отдельный `deception-service` binary;
+- запуск synthetic services через `setpriv` под UID/GID `audit-deception`;
+- статические HTTP, SSH-banner и PostgreSQL-auth decoy protocols;
+- authenticated prepare/status/destroy lifecycle routes для runtime validation.
 
 Автоматический redirect `HIGH -> ENGAGE -> DECEIVE` пока не включён. До появления безопасного redirect boundary HIGH/CRITICAL продолжают fail-closed через KillSwitch.
 

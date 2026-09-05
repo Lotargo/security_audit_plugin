@@ -4,6 +4,7 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use crate::deception_runtime::DeceptionRuntime;
 use sandbox_kernel::EvolveManager;
 
 #[derive(Debug, Deserialize)]
@@ -19,6 +20,16 @@ pub struct EventsQuery {
 #[derive(Debug, Deserialize)]
 pub struct TraceQuery {
     pub session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeceptionSessionRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeceptionStatusQuery {
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,4 +123,97 @@ pub async fn handle_events(
     let limit = query.limit.unwrap_or(100).min(1000);
     let manager = evolve_mgr.lock().await;
     Json(json!({"events": manager.recent_events(limit), "limit": limit}))
+}
+
+pub async fn handle_prepare_deception(
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
+    Extension(deception_runtime): Extension<Arc<Mutex<DeceptionRuntime>>>,
+    Json(payload): Json<DeceptionSessionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let instance = {
+        let mut manager = evolve_mgr.lock().await;
+        manager
+            .prepare_deception_for_session(&payload.session_id)
+            .map_err(|error| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": format!("Failed to prepare deception: {}", error)})),
+                )
+            })?
+    };
+
+    let start_result = {
+        let mut runtime = deception_runtime.lock().await;
+        runtime.start_instance(&instance).await
+    };
+
+    match start_result {
+        Ok(runtime) => Ok(Json(json!({
+            "status": "prepared",
+            "instance": instance,
+            "runtime": runtime
+        }))),
+        Err(error) => {
+            let mut manager = evolve_mgr.lock().await;
+            let _ = manager.destroy_deception_for_session(&payload.session_id);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Failed to start deception runtime: {}", error)})),
+            ))
+        }
+    }
+}
+
+pub async fn handle_deception_status(
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
+    Extension(deception_runtime): Extension<Arc<Mutex<DeceptionRuntime>>>,
+    Query(query): Query<DeceptionStatusQuery>,
+) -> Json<serde_json::Value> {
+    let runtime = deception_runtime.lock().await;
+    if let Some(session_id) = query.session_id.as_deref() {
+        let instance = {
+            let manager = evolve_mgr.lock().await;
+            manager.deception_instance(session_id)
+        };
+        Json(json!({
+            "instance": instance,
+            "runtime": runtime.status(session_id)
+        }))
+    } else {
+        Json(json!({"runtimes": runtime.statuses()}))
+    }
+}
+
+pub async fn handle_destroy_deception(
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
+    Extension(deception_runtime): Extension<Arc<Mutex<DeceptionRuntime>>>,
+    Json(payload): Json<DeceptionSessionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let runtime_destroyed = {
+        let mut runtime = deception_runtime.lock().await;
+        runtime.destroy(&payload.session_id).await.map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Failed to stop deception runtime: {}", error)})),
+            )
+        })?
+    };
+
+    let instance_destroyed = {
+        let mut manager = evolve_mgr.lock().await;
+        manager
+            .destroy_deception_for_session(&payload.session_id)
+            .map_err(|error| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": format!("Failed to destroy deception instance: {}", error)})),
+                )
+            })?
+    };
+
+    Ok(Json(json!({
+        "status": "destroyed",
+        "runtime_destroyed": runtime_destroyed,
+        "instance_destroyed": instance_destroyed
+    })))
 }

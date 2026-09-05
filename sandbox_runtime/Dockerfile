@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY Cargo.toml Cargo.lock* ./
 COPY crates ./crates
-RUN cargo build --locked --release --bin sandbox-daemon
+RUN cargo build --locked --release --bin sandbox-daemon --bin deception-service
 
 # ==============================================================================
 # Stage 2: Minimal & Hardened Kali Security Runtime
@@ -77,7 +77,8 @@ RUN npm install --omit=dev --no-audit --no-fund
 COPY stealth/*.js stealth/waf_profiles.json ./
 
 COPY --from=builder /usr/src/app/target/release/sandbox-daemon /usr/local/bin/sandbox-daemon
-RUN chmod +x /usr/local/bin/sandbox-daemon
+COPY --from=builder /usr/src/app/target/release/deception-service /usr/local/bin/deception-service
+RUN chmod +x /usr/local/bin/sandbox-daemon /usr/local/bin/deception-service
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh

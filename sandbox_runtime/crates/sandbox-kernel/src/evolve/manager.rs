@@ -146,6 +146,16 @@ impl EvolveManager {
         self.deception.instance(session_id).cloned()
     }
 
+    pub fn destroy_deception_for_session(
+        &mut self,
+        session_id: &str,
+    ) -> Result<bool, DeceptionError> {
+        if let Some(session) = self.sessions.get_mut(session_id) {
+            session.active_deception_profile = None;
+        }
+        self.deception.destroy(session_id)
+    }
+
     pub fn recent_events(&self, limit: usize) -> Vec<SecurityEvent> {
         let limit = limit.min(self.events.len());
         self.events

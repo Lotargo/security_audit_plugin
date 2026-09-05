@@ -14,10 +14,12 @@ use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod auth;
+mod deception_runtime;
 mod evolve_events;
 mod routes;
 
 use auth::{ratchet_auth_middleware, RatchetAuthState};
+use deception_runtime::DeceptionRuntime;
 use evolve_events::EvolveEventSink;
 use sandbox_kernel::canary::CanaryManager;
 use sandbox_kernel::{
@@ -103,6 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .expect("Failed to initialize RatchetAuthState");
 
     let evolve_mgr = Arc::new(Mutex::new(EvolveManager::new()));
+    let deception_runtime = Arc::new(Mutex::new(DeceptionRuntime::new()));
     let (evolve_event_tx, mut evolve_event_rx) = mpsc::unbounded_channel();
     let evolve_event_sink = EvolveEventSink::new(evolve_event_tx);
     let canary_mgr = Arc::new(Mutex::new(CanaryManager::with_event_sender(
@@ -220,6 +223,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/evolve/sessions", get(routes::evolve::handle_sessions))
         .route("/evolve/trace", get(routes::evolve::handle_trace))
         .route("/evolve/events", get(routes::evolve::handle_events))
+        .route(
+            "/evolve/deception/prepare",
+            post(routes::evolve::handle_prepare_deception),
+        )
+        .route(
+            "/evolve/deception/status",
+            get(routes::evolve::handle_deception_status),
+        )
+        .route(
+            "/evolve/deception/destroy",
+            post(routes::evolve::handle_destroy_deception),
+        )
         .route("/http_probe", post(routes::probe::handle_http_probe))
         .route(
             "/browser_audit",
@@ -231,6 +246,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ))
         .layer(Extension(canary_mgr))
         .layer(Extension(evolve_mgr))
+        .layer(Extension(deception_runtime))
         .layer(Extension(evolve_event_sink));
 
     let app = Router::new()

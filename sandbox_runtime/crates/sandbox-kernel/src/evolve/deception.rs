@@ -122,7 +122,8 @@ impl DeceptionFabric {
         Self::default()
     }
 
-    pub fn with_root(base_root: impl Into<PathBuf>) -> Self {
+    #[cfg(test)]
+    pub(crate) fn with_root(base_root: impl Into<PathBuf>) -> Self {
         Self {
             instances: HashMap::new(),
             base_root: base_root.into(),
@@ -142,6 +143,8 @@ impl DeceptionFabric {
         let root = self.base_root.join(session_id);
         validate_root(&root, &self.base_root)?;
         fs::create_dir_all(&root)?;
+        restrict_directory(&self.base_root)?;
+        restrict_directory(&root)?;
 
         let services = planned_services(profile);
         for service in &services {
@@ -217,7 +220,7 @@ fn planned_services(profile: DeceptionProfile) -> Vec<DeceptionService> {
         DeceptionProfile::CiRunner => &[("artifact-api", 18081, "http")],
         DeceptionProfile::ApplicationServer => &[("app-http", 18082, "http")],
         DeceptionProfile::DatabaseHost => &[("postgres-shadow", 18432, "postgres")],
-        DeceptionProfile::KubernetesNode => &[("kube-api-shadow", 18443, "https")],
+        DeceptionProfile::KubernetesNode => &[("kube-api-shadow", 18084, "http")],
         DeceptionProfile::BastionHost => &[("ssh-shadow", 18022, "ssh")],
         DeceptionProfile::SecretsService => &[("vault-shadow", 18200, "http")],
         DeceptionProfile::InternalApi => &[("internal-api-shadow", 18083, "http")],
@@ -245,10 +248,9 @@ fn materialize_profile(
         "synthetic": true,
         "services": services,
     });
-    fs::write(
-        root.join("manifest.json"),
-        serde_json::to_vec_pretty(&manifest)?,
-    )?;
+    let manifest_path = root.join("manifest.json");
+    fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+    restrict_file(&manifest_path)?;
 
     match profile {
         DeceptionProfile::DeveloperWorkstation => {
@@ -286,7 +288,26 @@ fn write_file(root: &Path, relative: &str, value: &str) -> Result<(), std::io::E
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, value)
+    fs::write(&path, value)?;
+    restrict_file(&path)
+}
+
+fn restrict_directory(path: &Path) -> Result<(), std::io::Error> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+fn restrict_file(path: &Path) -> Result<(), std::io::Error> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
 }
 
 fn now_ms() -> u64 {
