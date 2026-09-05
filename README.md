@@ -2,7 +2,7 @@
 
 Security audit tooling and an isolated Docker execution sandbox for AI coding agents (Google Antigravity, OpenCode, Claude Code, OpenAI Codex, Gemini CLI, Cursor).
 
-The project combines a TypeScript MCP host bridge, a Rust sandbox daemon/kernel layer, a scoped Chromium audit runner, managed Tor routing, and 19 AgentSkills for static and dynamic security assessment workflows.
+The project combines a TypeScript MCP host bridge, a Rust sandbox daemon/kernel layer, a scoped Chromium audit runner, managed Tor routing, an adaptive Evolve deception runtime, and 19 AgentSkills for static and dynamic security assessment workflows.
 
 ## Current Architecture
 
@@ -42,8 +42,23 @@ The plugin does **not** read, copy, proxy, or store model-provider credentials f
 - Denied private, loopback, link-local, and metadata ranges take precedence over allow rules.
 - Agent-controlled commands run under an unprivileged UID and cannot modify nftables.
 - Emergency isolation drops the network policy and flushes existing connection state.
+- Once emergency isolation is latched, egress cannot be provisioned again in the same runtime; a clean sandbox recreate is required.
 
-### 4. Managed Browser Audits
+### 4. Evolve Adaptive Deception
+
+- Primary honeytokens remain the first tripwire. A trigger immediately engages the existing fail-closed Kill Switch before any deception workflow continues.
+- The deeper inert surface under `.deployment/prod/` is materialized only after containment, so healthy audit tooling does not normally walk the decoy environment.
+- Post-containment decoy access is observed with recursive `inotifywait` telemetry and appended to `.evolve/events.jsonl`.
+- `.evolve/profile.json` persists behavior categories, techniques, trigger counts, recommendations, and an explicit Evolve generation across sandbox recreations that reuse the workspace.
+- New validated TTP observations update a deterministic, explainable defensive profile instead of an opaque online-learning model.
+- Evolve never performs external retaliation or widens audit scope. It operates inside the sandbox boundary and cannot disable a latched isolation state.
+- Agents can inspect and enrich the profile through `sandbox_evolve_status` and `sandbox_evolve_observe`.
+
+The resulting loop is:
+
+`detect -> contain -> substitute surface -> observe -> adapt`
+
+### 5. Managed Browser Audits
 
 - Chromium runs under a dedicated browser UID rather than the daemon or agent UID.
 - Browser configuration is passed through stdin JSON instead of process-list arguments.
@@ -53,7 +68,7 @@ The plugin does **not** read, copy, proxy, or store model-provider credentials f
 - WAF heuristics inspect response headers, cookies, body markers, and common challenge signals.
 - Optional human-like cursor, delay, and scrolling behavior is available, but no challenge bypass is guaranteed.
 
-### 5. Managed Tor Containment
+### 6. Managed Tor Containment
 
 - Tor listens only on localhost (`9050` SOCKS / `9051` ControlPort).
 - ControlPort uses cookie authentication.
@@ -63,13 +78,13 @@ The plugin does **not** read, copy, proxy, or store model-provider credentials f
 - Agent DNS traffic is rejected while Tor scope is active; managed HTTP probes use `socks5h` so hostname resolution occurs through Tor.
 - `.onion` hostnames are kept out of trusted-host DNS resolution.
 
-### 6. Reporting Primitives
+### 7. Reporting Primitives
 
 - A programmatic OASIS SARIF v2.1.0 builder is exported from the package API.
 - Audit artifacts can be read and written through the jailed workspace filesystem MCP tools.
 - There is currently no dedicated `sandbox_sarif_export` MCP tool; AgentSkills should generate/report through the available programmatic or filesystem workflow instead of assuming one exists.
 
-### 7. Client CLI Integration
+### 8. Client CLI Integration
 
 The client integration layer follows the same native-first pattern used by `@lotargo/memory_plugin`:
 
@@ -237,7 +252,7 @@ Uninstall refuses to delete a same-name registration when it cannot prove that t
 
 ---
 
-## MCP Tools Reference (12 Implemented Tools)
+## MCP Tools Reference (14 Implemented Tools)
 
 1. `sandbox_set_scope` - Configure local/remote/hybrid RoE, pinned egress, optional managed Tor, and canary arming.
 2. `sandbox_rotate_tor_ip` - Request a new Tor circuit for an active Tor-enabled scope.
@@ -251,6 +266,8 @@ Uninstall refuses to delete a same-name registration when it cannot prove that t
 10. `sandbox_reset` - Reset or recreate the sandbox runtime.
 11. `sandbox_fs_read` - Read a workspace file through JailGuard path validation.
 12. `sandbox_fs_write` - Write a workspace artifact through JailGuard path validation.
+13. `sandbox_evolve_status` - Read the current adaptive-deception phase, generation, learned behavior patterns, and defensive recommendations.
+14. `sandbox_evolve_observe` - Record a validated defensive TTP observation and evolve the persistent behavior profile without widening network scope.
 
 Not currently exposed as MCP tools:
 
