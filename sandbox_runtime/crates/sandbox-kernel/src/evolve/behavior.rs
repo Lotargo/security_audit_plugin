@@ -104,9 +104,10 @@ impl BehaviorProfiler {
         let base_risk = deterministic_event_risk(event);
 
         let event_capacity = self.event_capacity;
-        let trace = self.traces.entry(session_id.clone()).or_insert_with(|| {
-            BehaviorTrace::new(session_id, event.timestamp_ms, event_capacity)
-        });
+        let trace = self
+            .traces
+            .entry(session_id.clone())
+            .or_insert_with(|| BehaviorTrace::new(session_id, event.timestamp_ms, event_capacity));
 
         let sequence_risk = sequence_risk(trace, event, &tags);
         let effective_risk = max_risk(base_risk, sequence_risk);
@@ -155,7 +156,7 @@ impl BehaviorProfiler {
 
     pub fn traces(&self) -> Vec<BehaviorTrace> {
         let mut traces: Vec<_> = self.traces.values().cloned().collect();
-        traces.sort_by(|left, right| left.started_at_ms.cmp(&right.started_at_ms));
+        traces.sort_by_key(|trace| trace.started_at_ms);
         traces
     }
 }
@@ -206,7 +207,7 @@ fn classify_event(event: &SecurityEvent) -> Vec<BehaviorTag> {
         SecurityEventType::CredentialAccess => {
             tags.push(BehaviorTag::CredentialInterest);
             tags.push(BehaviorTag::CredentialAccess);
-        },
+        }
         SecurityEventType::NetworkConnect
         | SecurityEventType::NetworkListen
         | SecurityEventType::DnsAttempt
@@ -287,9 +288,8 @@ fn sequence_risk(
         && current_tags.contains(&BehaviorTag::NetworkActivity);
     let credential_access_then_network = previous_tags.contains(&BehaviorTag::CredentialAccess)
         && current_tags.contains(&BehaviorTag::NetworkActivity);
-    let credential_interest_then_network =
-        previous_tags.contains(&BehaviorTag::CredentialInterest)
-            && current_tags.contains(&BehaviorTag::NetworkActivity);
+    let credential_interest_then_network = previous_tags.contains(&BehaviorTag::CredentialInterest)
+        && current_tags.contains(&BehaviorTag::NetworkActivity);
     let repeated_policy_boundary = previous_tags.contains(&BehaviorTag::PolicyBoundary)
         && current_tags.contains(&BehaviorTag::PolicyBoundary);
 
@@ -297,10 +297,7 @@ fn sequence_risk(
         return RiskLevel::High;
     }
 
-    if discovery_then_network
-        || credential_interest_then_network
-        || repeated_policy_boundary
-    {
+    if discovery_then_network || credential_interest_then_network || repeated_policy_boundary {
         return RiskLevel::Medium;
     }
 
@@ -316,14 +313,12 @@ mod tests {
     fn discovery_followed_by_network_activity_raises_medium_risk() {
         let mut profiler = BehaviorProfiler::new();
 
-        let discovery =
-            SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
-                .with_session_id("session-a")
-                .with_command("whoami");
-        let network =
-            SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
-                .with_session_id("session-a")
-                .with_command("curl https://example.com");
+        let discovery = SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
+            .with_session_id("session-a")
+            .with_command("whoami");
+        let network = SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
+            .with_session_id("session-a")
+            .with_command("curl https://example.com");
 
         assert_eq!(profiler.observe(&discovery).risk_level, RiskLevel::Low);
         assert_eq!(profiler.observe(&network).risk_level, RiskLevel::Medium);
@@ -338,14 +333,12 @@ mod tests {
     fn credential_interest_followed_by_network_activity_is_medium_risk() {
         let mut profiler = BehaviorProfiler::new();
 
-        let credential =
-            SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
-                .with_session_id("session-a")
-                .with_command("cat ~/.ssh/id_rsa");
-        let network =
-            SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
-                .with_session_id("session-a")
-                .with_command("curl https://example.com");
+        let credential = SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
+            .with_session_id("session-a")
+            .with_command("cat ~/.ssh/id_rsa");
+        let network = SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
+            .with_session_id("session-a")
+            .with_command("curl https://example.com");
 
         profiler.observe(&credential);
         assert_eq!(profiler.observe(&network).risk_level, RiskLevel::Medium);
@@ -359,10 +352,9 @@ mod tests {
             SecurityEvent::new(EventSource::Filesystem, SecurityEventType::CredentialAccess)
                 .with_session_id("session-a")
                 .with_resource("/workspace/secret");
-        let network =
-            SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
-                .with_session_id("session-a")
-                .with_command("curl https://example.com");
+        let network = SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
+            .with_session_id("session-a")
+            .with_command("curl https://example.com");
 
         profiler.observe(&credential);
         assert_eq!(profiler.observe(&network).risk_level, RiskLevel::High);
@@ -388,9 +380,8 @@ mod tests {
     #[test]
     fn control_plane_access_is_always_critical() {
         let mut profiler = BehaviorProfiler::new();
-        let event =
-            SecurityEvent::new(EventSource::Policy, SecurityEventType::ControlPlaneAccess)
-                .with_session_id("session-a");
+        let event = SecurityEvent::new(EventSource::Policy, SecurityEventType::ControlPlaneAccess)
+            .with_session_id("session-a");
 
         let assessment = profiler.observe(&event);
         assert_eq!(assessment.risk_level, RiskLevel::Critical);
@@ -403,10 +394,9 @@ mod tests {
         profiler.event_capacity = 2;
 
         for index in 0..3 {
-            let event =
-                SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
-                    .with_session_id("session-a")
-                    .with_command(format!("echo {index}"));
+            let event = SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
+                .with_session_id("session-a")
+                .with_command(format!("echo {index}"));
             profiler.observe(&event);
         }
 

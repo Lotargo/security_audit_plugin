@@ -8,9 +8,7 @@ pub mod narrative;
 pub mod session;
 pub mod state;
 
-pub use attack_path::{
-    AttackPathError, ShadowAttackPath, ShadowNode, ShadowNodeState,
-};
+pub use attack_path::{AttackPathError, ShadowAttackPath, ShadowNode, ShadowNodeState};
 pub use behavior::{BehaviorAssessment, BehaviorProfiler, BehaviorTag, BehaviorTrace};
 pub use deception::{
     DeceptionError, DeceptionFabric, DeceptionInstance, DeceptionProfile, DeceptionService,

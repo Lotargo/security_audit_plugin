@@ -176,12 +176,7 @@ users:
         Ok(planted)
     }
 
-    fn spawn_watcher(
-        &self,
-        traps: Vec<CanaryTrap>,
-        session_id: Option<String>,
-        generation: u64,
-    ) {
+    fn spawn_watcher(&self, traps: Vec<CanaryTrap>, session_id: Option<String>, generation: u64) {
         let is_armed = self.is_armed.clone();
         let triggered_count = self.triggered_count.clone();
         let watch_generation = self.watch_generation.clone();
@@ -192,12 +187,8 @@ users:
 
             // Phase 8.1 keeps the existing metadata polling source and decouples its reaction.
             // EVENT_MODEL.md tracks the later migration to fanotify/inotify.
-            let mut initial_meta: Vec<(
-                PathBuf,
-                String,
-                u64,
-                Option<std::time::SystemTime>,
-            )> = Vec::new();
+            let mut initial_meta: Vec<(PathBuf, String, u64, Option<std::time::SystemTime>)> =
+                Vec::new();
             for trap in &traps {
                 if let Ok(meta) = std::fs::metadata(&trap.file_path) {
                     initial_meta.push((

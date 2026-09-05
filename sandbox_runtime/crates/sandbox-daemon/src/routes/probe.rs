@@ -103,11 +103,7 @@ fn emit_probe_event(
     event_sink.emit(event);
 }
 
-fn emit_probe_policy_violation(
-    event_sink: &EvolveEventSink,
-    payload: &ProbeRequest,
-    reason: &str,
-) {
+fn emit_probe_policy_violation(event_sink: &EvolveEventSink, payload: &ProbeRequest, reason: &str) {
     emit_probe_event(
         event_sink,
         payload,

@@ -42,12 +42,17 @@ pub fn resolve_agent_surface(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sandbox_kernel::{EventSource, EvolveDecision, RiskLevel, SecurityEvent, SecurityEventType};
+    use sandbox_kernel::{
+        EventSource, EvolveDecision, RiskLevel, SecurityEvent, SecurityEventType,
+    };
 
     #[test]
     fn ordinary_runtime_resolves_to_real_surface() {
         let manager = EvolveManager::new();
-        assert_eq!(resolve_agent_surface(&manager, None), Ok(AgentSurface::Real));
+        assert_eq!(
+            resolve_agent_surface(&manager, None),
+            Ok(AgentSurface::Real)
+        );
     }
 
     #[test]

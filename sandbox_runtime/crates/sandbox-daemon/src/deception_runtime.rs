@@ -103,9 +103,9 @@ impl DeceptionRuntime {
                 .stderr(Stdio::null())
                 .kill_on_drop(true);
 
-            let child = command.spawn().map_err(|error| {
-                DeceptionRuntimeError::SpawnFailed(service.name.clone(), error)
-            })?;
+            let child = command
+                .spawn()
+                .map_err(|error| DeceptionRuntimeError::SpawnFailed(service.name.clone(), error))?;
             started.push(RunningService {
                 descriptor: service.clone(),
                 child,
@@ -138,20 +138,22 @@ impl DeceptionRuntime {
     }
 
     pub fn status(&self, session_id: &str) -> Option<DeceptionRuntimeStatus> {
-        self.sessions.get(session_id).map(|services| DeceptionRuntimeStatus {
-            session_id: session_id.to_string(),
-            services: services
-                .iter()
-                .map(|running| RunningServiceStatus {
-                    name: running.descriptor.name.clone(),
-                    hostname: running.descriptor.hostname.clone(),
-                    bind_host: running.descriptor.bind_host.clone(),
-                    port: running.descriptor.port,
-                    protocol: running.descriptor.protocol.clone(),
-                    pid: running.child.id(),
-                })
-                .collect(),
-        })
+        self.sessions
+            .get(session_id)
+            .map(|services| DeceptionRuntimeStatus {
+                session_id: session_id.to_string(),
+                services: services
+                    .iter()
+                    .map(|running| RunningServiceStatus {
+                        name: running.descriptor.name.clone(),
+                        hostname: running.descriptor.hostname.clone(),
+                        bind_host: running.descriptor.bind_host.clone(),
+                        port: running.descriptor.port,
+                        protocol: running.descriptor.protocol.clone(),
+                        pid: running.child.id(),
+                    })
+                    .collect(),
+            })
     }
 
     pub fn statuses(&self) -> Vec<DeceptionRuntimeStatus> {
@@ -164,10 +166,7 @@ impl DeceptionRuntime {
         statuses
     }
 
-    pub async fn destroy(
-        &mut self,
-        session_id: &str,
-    ) -> Result<bool, DeceptionRuntimeError> {
+    pub async fn destroy(&mut self, session_id: &str) -> Result<bool, DeceptionRuntimeError> {
         let Some(mut services) = self.sessions.remove(session_id) else {
             return Ok(false);
         };

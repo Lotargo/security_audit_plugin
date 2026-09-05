@@ -135,7 +135,10 @@ impl FeedbackMemory {
         };
 
         {
-            let mut state = self.inner.lock().map_err(|_| FeedbackError::StatePoisoned)?;
+            let mut state = self
+                .inner
+                .lock()
+                .map_err(|_| FeedbackError::StatePoisoned)?;
             state.phase = FeedbackPhase::Armed;
             state.generation = persisted.generation;
             state.trigger_count = persisted.trigger_count;
@@ -154,7 +157,10 @@ impl FeedbackMemory {
     }
 
     pub fn status(&self) -> Result<FeedbackStatus, FeedbackError> {
-        let state = self.inner.lock().map_err(|_| FeedbackError::StatePoisoned)?;
+        let state = self
+            .inner
+            .lock()
+            .map_err(|_| FeedbackError::StatePoisoned)?;
         Ok(FeedbackStatus {
             phase: state.phase,
             generation: state.generation,
@@ -162,8 +168,14 @@ impl FeedbackMemory {
             observation_count: state.observation_count,
             patterns: state.patterns.clone(),
             recommendations: state.recommendations.clone(),
-            decoy_root: state.decoy_root.as_ref().map(|p| p.to_string_lossy().into_owned()),
-            event_log: state.event_log.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            decoy_root: state
+                .decoy_root
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned()),
+            event_log: state
+                .event_log
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned()),
         })
     }
 
@@ -195,11 +207,17 @@ impl FeedbackMemory {
         }
 
         let decoy_root = {
-            let mut state = self.inner.lock().map_err(|_| FeedbackError::StatePoisoned)?;
+            let mut state = self
+                .inner
+                .lock()
+                .map_err(|_| FeedbackError::StatePoisoned)?;
             if matches!(state.phase, FeedbackPhase::Idle) {
                 return Err(FeedbackError::IsolationRequired);
             }
-            if !matches!(state.phase, FeedbackPhase::IsolatedObserving | FeedbackPhase::Adapted) {
+            if !matches!(
+                state.phase,
+                FeedbackPhase::IsolatedObserving | FeedbackPhase::Adapted
+            ) {
                 state.phase = FeedbackPhase::IsolatedObserving;
                 state.trigger_count = state.trigger_count.saturating_add(1);
                 state.generation = state.generation.saturating_add(1);
@@ -210,7 +228,10 @@ impl FeedbackMemory {
         if let Some(root) = decoy_root {
             self.materialize_decoy_surface(&root)?;
             let should_start = {
-                let mut state = self.inner.lock().map_err(|_| FeedbackError::StatePoisoned)?;
+                let mut state = self
+                    .inner
+                    .lock()
+                    .map_err(|_| FeedbackError::StatePoisoned)?;
                 if state.watcher_started {
                     false
                 } else {
@@ -252,7 +273,10 @@ impl FeedbackMemory {
         let severity = severity.clamp(1, 5);
 
         let (event, event_log) = {
-            let mut state = self.inner.lock().map_err(|_| FeedbackError::StatePoisoned)?;
+            let mut state = self
+                .inner
+                .lock()
+                .map_err(|_| FeedbackError::StatePoisoned)?;
             let key = format!("{}:{}", category, technique);
             let is_new = !state.patterns.contains_key(&key);
             *state.patterns.entry(key).or_insert(0) += 1;
@@ -288,7 +312,10 @@ impl FeedbackMemory {
 
     fn persist_profile(&self) -> Result<(), FeedbackError> {
         let (profile_path, profile) = {
-            let state = self.inner.lock().map_err(|_| FeedbackError::StatePoisoned)?;
+            let state = self
+                .inner
+                .lock()
+                .map_err(|_| FeedbackError::StatePoisoned)?;
             let Some(path) = state.profile_path.clone() else {
                 return Ok(());
             };
@@ -320,7 +347,9 @@ impl FeedbackMemory {
         fs::create_dir_all(&ssh)?;
         fs::create_dir_all(&notes)?;
 
-        write_if_missing(&root.join("manifest.json"), r#"{
+        write_if_missing(
+            &root.join("manifest.json"),
+            r#"{
   "environment": "production",
   "region": "eu-central",
   "database_config": ".deployment/prod/database/runtime.env",
@@ -328,7 +357,8 @@ impl FeedbackMemory {
   "bastion_identity": ".deployment/prod/ssh/bastion_ed25519",
   "rotation_notes": ".deployment/prod/notes/rotation.txt"
 }
-"#)?;
+"#,
+        )?;
         write_if_missing(&db.join("runtime.env"), "DATABASE_HOST=db-prod.internal\nDATABASE_PORT=5432\nDATABASE_NAME=platform\nDATABASE_USER=svc_runtime\nDATABASE_PASSWORD=R7fQ9xN4vP2mL8cT6kW3\nREPLICA_HOST=db-replica.internal\n")?;
         write_if_missing(&kube.join("admin.conf"), "apiVersion: v1\nkind: Config\nclusters:\n- cluster:\n    server: https://control-plane.internal:6443\n  name: production\ncontexts:\n- context:\n    cluster: production\n    user: deploy-admin\n  name: production\ncurrent-context: production\nusers:\n- name: deploy-admin\n  user:\n    token: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.evolve-decoy.invalid\n")?;
         write_if_missing(&ssh.join("bastion_ed25519"), "-----BEGIN OPENSSH PRIVATE KEY-----\nZXZvbHZlLWRlY295LWtleS10aGlzLWlzLW5vdC1hLXJlYWwta2V5LWFuZC1jYW5ub3Qt\nYXV0aGVudGljYXRlLWFueXdoZXJl\n-----END OPENSSH PRIVATE KEY-----\n")?;
@@ -342,7 +372,16 @@ impl FeedbackMemory {
         thread::spawn(move || {
             let root_arg = root.to_string_lossy().into_owned();
             let child = Command::new("inotifywait")
-                .args(["-m", "-r", "-q", "-e", "open,access,modify,attrib,delete,move", "--format", "%e|%w%f", &root_arg])
+                .args([
+                    "-m",
+                    "-r",
+                    "-q",
+                    "-e",
+                    "open,access,modify,attrib,delete,move",
+                    "--format",
+                    "%e|%w%f",
+                    &root_arg,
+                ])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
                 .spawn();
@@ -358,7 +397,9 @@ impl FeedbackMemory {
 
             for line in BufReader::new(stdout).lines() {
                 let Ok(line) = line else { break };
-                let Some((mask, path)) = line.split_once('|') else { continue };
+                let Some((mask, path)) = line.split_once('|') else {
+                    continue;
+                };
                 if let Err(error) = memory.record_observation(
                     "deception",
                     "discovery",
@@ -379,7 +420,9 @@ impl FeedbackMemory {
 
 fn classify_canary(trap_type: &str) -> (&'static str, &'static str) {
     match trap_type {
-        "aws_credentials" | "gcp_credentials" => ("credential_access", "cloud_credentials_discovery"),
+        "aws_credentials" | "gcp_credentials" => {
+            ("credential_access", "cloud_credentials_discovery")
+        }
         "ssh_private_key" => ("credential_access", "ssh_key_discovery"),
         "kube_config" => ("cloud_control_plane", "kubernetes_config_discovery"),
         "env_secrets" => ("credential_access", "secret_file_discovery"),
@@ -392,23 +435,35 @@ fn build_recommendations(patterns: &BTreeMap<String, u64>) -> Vec<String> {
     for key in patterns.keys() {
         if key.starts_with("credential_access:") {
             actions.insert("Increase secret-access telemetry and validate rotation/revocation paths for exposed credentials.".to_string());
-            actions.insert("Reduce long-lived credentials and prefer workload identity or short-lived tokens.".to_string());
+            actions.insert(
+                "Reduce long-lived credentials and prefer workload identity or short-lived tokens."
+                    .to_string(),
+            );
         }
         if key.starts_with("cloud_control_plane:") {
-            actions.insert("Tighten Kubernetes/cloud RBAC and alert on privileged configuration discovery.".to_string());
+            actions.insert(
+                "Tighten Kubernetes/cloud RBAC and alert on privileged configuration discovery."
+                    .to_string(),
+            );
         }
         if key.starts_with("discovery:") {
             actions.insert("Increase filesystem/service discovery telemetry around high-value deployment artifacts.".to_string());
         }
         if key.contains("ssh") {
-            actions.insert("Review SSH trust boundaries, bastion segmentation, and key-use telemetry.".to_string());
+            actions.insert(
+                "Review SSH trust boundaries, bastion segmentation, and key-use telemetry."
+                    .to_string(),
+            );
         }
         if key.contains("decoy_surface_interaction") {
             actions.insert("Preserve the decoy path for the next generation and expand nearby inert artifacts.".to_string());
         }
     }
     if actions.is_empty() {
-        actions.insert("Continue collecting validated behavior before changing the defensive profile.".to_string());
+        actions.insert(
+            "Continue collecting validated behavior before changing the defensive profile."
+                .to_string(),
+        );
     }
     actions.into_iter().collect()
 }
@@ -423,7 +478,11 @@ fn normalize_label(value: String) -> String {
         }
     }
     let trimmed = out.trim_matches('_').to_string();
-    if trimmed.is_empty() { "unknown".to_string() } else { trimmed }
+    if trimmed.is_empty() {
+        "unknown".to_string()
+    } else {
+        trimmed
+    }
 }
 
 fn write_if_missing(path: &Path, content: &str) -> Result<(), std::io::Error> {
@@ -465,7 +524,9 @@ mod tests {
             Err(FeedbackError::IsolationRequired)
         ));
         KillSwitch::trigger("feedback unit test").unwrap();
-        memory.activate_after_isolation("env_secrets", &temp.path().join(".env.decoy")).unwrap();
+        memory
+            .activate_after_isolation("env_secrets", &temp.path().join(".env.decoy"))
+            .unwrap();
         assert!(temp.path().join(".deployment/prod/manifest.json").exists());
         KillSwitch::reset_isolation();
     }

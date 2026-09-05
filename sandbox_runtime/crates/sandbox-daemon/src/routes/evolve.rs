@@ -75,12 +75,16 @@ pub async fn handle_set_enabled(
     if payload.enabled && sandbox_kernel::KillSwitch::is_isolated() {
         return Err((
             StatusCode::CONFLICT,
-            Json(json!({"error": "cannot enable Evolve while the runtime is isolated; recreate or reset the sandbox first"})),
+            Json(
+                json!({"error": "cannot enable Evolve while the runtime is isolated; recreate or reset the sandbox first"}),
+            ),
         ));
     }
     let mut manager = evolve_mgr.lock().await;
     manager.set_enabled(payload.enabled);
-    Ok(Json(json!({"runtime": manager.status(), "feedback": manager.feedback_status().ok()})))
+    Ok(Json(
+        json!({"runtime": manager.status(), "feedback": manager.feedback_status().ok()}),
+    ))
 }
 
 pub async fn handle_status(
@@ -139,7 +143,10 @@ pub async fn handle_trace(
     let manager = evolve_mgr.lock().await;
     match manager.behavior_trace(&query.session_id) {
         Some(trace) => Ok(Json(json!(trace))),
-        None => Err((StatusCode::NOT_FOUND, Json(json!({"error": "Evolve behavior trace not found"})))),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Evolve behavior trace not found"})),
+        )),
     }
 }
 
@@ -234,15 +241,16 @@ pub async fn handle_destroy_deception(
     Extension(deception_runtime): Extension<Arc<Mutex<DeceptionRuntime>>>,
     Json(payload): Json<DeceptionSessionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let runtime_destroyed = {
-        let mut runtime = deception_runtime.lock().await;
-        runtime.destroy(&payload.session_id).await.map_err(|error| {
+    let runtime_destroyed =
+        {
+            let mut runtime = deception_runtime.lock().await;
+            runtime.destroy(&payload.session_id).await.map_err(|error| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": format!("Failed to stop deception runtime: {}", error)})),
             )
         })?
-    };
+        };
 
     let instance_destroyed = {
         let mut manager = evolve_mgr.lock().await;
@@ -270,12 +278,14 @@ pub async fn handle_deception_exec(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let instance = {
         let manager = evolve_mgr.lock().await;
-        manager.deception_instance(&payload.session_id).ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "deception instance not found"})),
-            )
-        })?
+        manager
+            .deception_instance(&payload.session_id)
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({"error": "deception instance not found"})),
+                )
+            })?
     };
 
     {
@@ -288,15 +298,19 @@ pub async fn handle_deception_exec(
         }
     }
 
-    deception_exec::execute(&instance, &payload.command, payload.timeout_secs.unwrap_or(30))
-        .await
-        .map(|result| Json(json!(result)))
-        .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("Deception execution failed: {}", error)})),
-            )
-        })
+    deception_exec::execute(
+        &instance,
+        &payload.command,
+        payload.timeout_secs.unwrap_or(30),
+    )
+    .await
+    .map(|result| Json(json!(result)))
+    .map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Deception execution failed: {}", error)})),
+        )
+    })
 }
 
 pub async fn handle_deception_fs_read(
@@ -305,18 +319,21 @@ pub async fn handle_deception_fs_read(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let instance = {
         let manager = evolve_mgr.lock().await;
-        if manager.session_state(&payload.session_id) != Some(sandbox_kernel::EvolveState::Deceive) {
+        if manager.session_state(&payload.session_id) != Some(sandbox_kernel::EvolveState::Deceive)
+        {
             return Err((
                 StatusCode::CONFLICT,
                 Json(json!({"error": "deception filesystem is available only in DECEIVE state"})),
             ));
         }
-        manager.deception_instance(&payload.session_id).ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "deception instance not found"})),
-            )
-        })?
+        manager
+            .deception_instance(&payload.session_id)
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({"error": "deception instance not found"})),
+                )
+            })?
     };
 
     deception_fs::read_file(&instance, &payload.path)
@@ -336,18 +353,21 @@ pub async fn handle_deception_fs_write(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let instance = {
         let manager = evolve_mgr.lock().await;
-        if manager.session_state(&payload.session_id) != Some(sandbox_kernel::EvolveState::Deceive) {
+        if manager.session_state(&payload.session_id) != Some(sandbox_kernel::EvolveState::Deceive)
+        {
             return Err((
                 StatusCode::CONFLICT,
                 Json(json!({"error": "deception filesystem is available only in DECEIVE state"})),
             ));
         }
-        manager.deception_instance(&payload.session_id).ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "deception instance not found"})),
-            )
-        })?
+        manager
+            .deception_instance(&payload.session_id)
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({"error": "deception instance not found"})),
+                )
+            })?
     };
 
     deception_fs::write_file(&instance, &payload.path, &payload.content)

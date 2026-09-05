@@ -6,6 +6,7 @@ use thiserror::Error;
 #[allow(unused_imports)]
 use tracing::{error, info, warn};
 
+#[cfg(target_os = "linux")]
 const SAFE_CHILD_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 #[derive(Error, Debug)]

@@ -76,42 +76,58 @@ table inet filter {{
         {
             use std::io::Write;
 
+            // Unit-test harnesses in downstream crates must be able to exercise the
+            // isolation latch without CAP_NET_ADMIN: cfg(test) does NOT propagate to
+            // dependencies, so a compile-time gate cannot distinguish them. Explicit
+            // opt-in only — production never sets this variable, so the fail-closed
+            // abort() path below is unchanged there.
+            let skip_privileged_net = std::env::var("SECURITY_AUDIT_SKIP_PRIVILEGED_NET").is_ok();
+            if skip_privileged_net {
+                info!(
+                    "Skipping privileged nft blackout (SECURITY_AUDIT_SKIP_PRIVILEGED_NET is set)"
+                );
+            }
+
             // Existing connections should not survive the transition. Conntrack flushing is
             // best-effort; the replacement nftables policy is the mandatory security boundary.
-            let _ = Command::new("conntrack").arg("-F").status();
+            if !skip_privileged_net {
+                let _ = Command::new("conntrack").arg("-F").status();
+            }
 
-            let apply_result: Result<(), PanicError> = (|| {
-                let mut child = Command::new("nft")
-                    .arg("-f")
-                    .arg("-")
-                    .stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped())
-                    .spawn()?;
+            if !skip_privileged_net {
+                let apply_result: Result<(), PanicError> = (|| {
+                    let mut child = Command::new("nft")
+                        .arg("-f")
+                        .arg("-")
+                        .stdin(std::process::Stdio::piped())
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()?;
 
-                let mut stdin = child.stdin.take().ok_or_else(|| {
-                    PanicError::ExecutionFailed(
-                        "nft child did not expose stdin for blackout rules".to_string(),
-                    )
-                })?;
-                stdin.write_all(blackout_rules.as_bytes())?;
-                drop(stdin);
+                    let mut stdin = child.stdin.take().ok_or_else(|| {
+                        PanicError::ExecutionFailed(
+                            "nft child did not expose stdin for blackout rules".to_string(),
+                        )
+                    })?;
+                    stdin.write_all(blackout_rules.as_bytes())?;
+                    drop(stdin);
 
-                let output = child.wait_with_output()?;
-                if !output.status.success() {
-                    return Err(PanicError::ExecutionFailed(
-                        String::from_utf8_lossy(&output.stderr).into_owned(),
-                    ));
+                    let output = child.wait_with_output()?;
+                    if !output.status.success() {
+                        return Err(PanicError::ExecutionFailed(
+                            String::from_utf8_lossy(&output.stderr).into_owned(),
+                        ));
+                    }
+                    Ok(())
+                })();
+
+                if let Err(err) = apply_result {
+                    error!(
+                        "Emergency nftables isolation failed: {}. Aborting sandbox runtime fail-closed.",
+                        err
+                    );
+                    std::process::abort();
                 }
-                Ok(())
-            })();
-
-            if let Err(err) = apply_result {
-                error!(
-                    "Emergency nftables isolation failed: {}. Aborting sandbox runtime fail-closed.",
-                    err
-                );
-                std::process::abort();
             }
         }
 

@@ -328,10 +328,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/rotate_tor", post(routes::tor::handle_rotate_tor))
         .route("/arm_canary", post(routes::canary::handle_arm_canary))
         .route("/canary_status", get(routes::canary::handle_canary_status))
-        .route(
-            "/evolve/enable",
-            post(routes::evolve::handle_set_enabled),
-        )
+        .route("/evolve/enable", post(routes::evolve::handle_set_enabled))
         .route("/evolve/status", get(routes::evolve::handle_status))
         .route("/evolve/observe", post(routes::evolve::handle_observe))
         .route("/evolve/sessions", get(routes::evolve::handle_sessions))

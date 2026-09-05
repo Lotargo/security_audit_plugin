@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum EvolveState {
+    #[default]
     Observe,
     Suspect,
     Engage,
@@ -11,12 +12,6 @@ pub enum EvolveState {
     Learn,
     Adapt,
     Isolate,
-}
-
-impl Default for EvolveState {
-    fn default() -> Self {
-        Self::Observe
-    }
 }
 
 impl EvolveState {

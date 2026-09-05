@@ -78,11 +78,7 @@ fn emit_browser_event(
     event_sink.emit(event);
 }
 
-fn emit_browser_policy_violation(
-    event_sink: &EvolveEventSink,
-    config: &Value,
-    reason: &str,
-) {
+fn emit_browser_policy_violation(event_sink: &EvolveEventSink, config: &Value, reason: &str) {
     let mut event = SecurityEvent::new(EventSource::Policy, SecurityEventType::PolicyViolation)
         .with_resource("browser_audit")
         .with_result(reason.to_string())

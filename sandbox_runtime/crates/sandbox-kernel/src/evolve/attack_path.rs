@@ -204,9 +204,10 @@ impl ShadowAttackPath {
     }
 
     fn expose_profile(&mut self, profile: DeceptionProfile) -> bool {
-        let node_id = self.nodes.iter().find_map(|(node_id, node)| {
-            (node.profile == profile).then(|| node_id.clone())
-        });
+        let node_id = self
+            .nodes
+            .iter()
+            .find_map(|(node_id, node)| (node.profile == profile).then(|| node_id.clone()));
         let Some(node_id) = node_id else {
             return false;
         };
@@ -365,10 +366,7 @@ fn topology_for(entry: DeceptionProfile) -> Vec<DeceptionProfile> {
     }
 }
 
-fn infer_target_profile(
-    command: &str,
-    tags: &[BehaviorTag],
-) -> Option<DeceptionProfile> {
+fn infer_target_profile(command: &str, tags: &[BehaviorTag]) -> Option<DeceptionProfile> {
     if command.contains("kubectl") || command.contains("kube") {
         return Some(DeceptionProfile::KubernetesNode);
     }
@@ -406,8 +404,7 @@ mod tests {
 
     #[test]
     fn path_starts_with_only_entry_and_next_node_visible() {
-        let path =
-            ShadowAttackPath::build("session-a", DeceptionProfile::SecretsService).unwrap();
+        let path = ShadowAttackPath::build("session-a", DeceptionProfile::SecretsService).unwrap();
         assert_eq!(path.visible_nodes().len(), 2);
         assert_eq!(
             path.nodes[&path.entry_node_id].state,
@@ -417,8 +414,7 @@ mod tests {
 
     #[test]
     fn behavior_can_expose_relevant_hidden_node() {
-        let mut path =
-            ShadowAttackPath::build("session-a", DeceptionProfile::CiRunner).unwrap();
+        let mut path = ShadowAttackPath::build("session-a", DeceptionProfile::CiRunner).unwrap();
         let event = SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
             .with_command("kubectl get pods");
 

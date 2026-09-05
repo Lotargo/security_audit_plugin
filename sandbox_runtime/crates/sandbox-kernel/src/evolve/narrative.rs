@@ -89,8 +89,6 @@ mod tests {
         assert!(!EnvironmentNarrative::hostname_is_safe(
             "evolve-node.internal"
         ));
-        assert!(EnvironmentNarrative::hostname_is_safe(
-            "db-prod.internal"
-        ));
+        assert!(EnvironmentNarrative::hostname_is_safe("db-prod.internal"));
     }
 }

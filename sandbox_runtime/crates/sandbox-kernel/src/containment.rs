@@ -1,7 +1,5 @@
 use crate::egress::{split_ip_families, EgressConfig};
-use crate::privilege::{
-    configured_audit_exec_identity, DECEPTION_EXEC_UID, TOR_EXEC_UID,
-};
+use crate::privilege::{configured_audit_exec_identity, DECEPTION_EXEC_UID, TOR_EXEC_UID};
 #[cfg(target_os = "linux")]
 use crate::tmux::TmuxManager;
 use std::collections::BTreeSet;
@@ -31,8 +29,7 @@ fn planned_rules(
     // Agent-controlled shells never need direct access to Tor control services or DNS. Target
     // names are resolved by the trusted host for L3 pinning, while browser/probe clients use
     // their own managed resolver path. Blocking both UDP/TCP 53 closes DNS as an exfil channel.
-    let management_port =
-        std::env::var("PORT").unwrap_or_else(|_| "9999".to_string());
+    let management_port = std::env::var("PORT").unwrap_or_else(|_| "9999".to_string());
 
     let mut rules = vec![
         vec![
@@ -303,9 +300,7 @@ pub fn terminate_audit_processes() -> Result<(), ContainmentError> {
 
         std::thread::sleep(std::time::Duration::from_millis(25));
 
-        let verify = Command::new("pgrep")
-            .args(["-u", uid.as_str()])
-            .status()?;
+        let verify = Command::new("pgrep").args(["-u", uid.as_str()]).status()?;
         match verify.code() {
             Some(1) => Ok(()),
             Some(0) => Err(ContainmentError::ProcessTerminationFailed(
@@ -347,9 +342,8 @@ mod tests {
         assert!(rendered
             .iter()
             .any(|rule| rule == &format!("meta skuid {DECEPTION_EXEC_UID} tcp dport 9999 reject")));
-        assert!(rendered
-            .iter()
-            .any(|rule| rule == &format!(
+        assert!(rendered.iter().any(|rule| rule
+            == &format!(
                 "meta skuid {DECEPTION_EXEC_UID} ip daddr 127.0.0.0/8 tcp dport 18000-18999 accept"
             )));
         assert!(rendered

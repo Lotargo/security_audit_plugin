@@ -42,8 +42,7 @@ mod tests {
     fn sink_delivers_event_to_receiver() {
         let (sender, mut receiver) = mpsc::unbounded_channel();
         let sink = EvolveEventSink::new(sender);
-        let event =
-            SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec);
+        let event = SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec);
 
         assert!(sink.emit(event));
         assert!(receiver.try_recv().is_ok());
@@ -54,8 +53,7 @@ mod tests {
         let (sender, receiver) = mpsc::unbounded_channel();
         drop(receiver);
         let sink = EvolveEventSink::new(sender);
-        let event =
-            SecurityEvent::new(EventSource::System, SecurityEventType::PolicyViolation);
+        let event = SecurityEvent::new(EventSource::System, SecurityEventType::PolicyViolation);
 
         assert!(!sink.emit(event));
     }

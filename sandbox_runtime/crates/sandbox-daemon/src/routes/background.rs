@@ -8,9 +8,7 @@ use tracing::info;
 use crate::evolve_events::EvolveEventSink;
 use crate::surface_guard::{resolve_agent_surface, AgentSurface};
 use sandbox_kernel::tmux::TmuxManager;
-use sandbox_kernel::{
-    EventSource, EvolveManager, RiskLevel, SecurityEvent, SecurityEventType,
-};
+use sandbox_kernel::{EventSource, EvolveManager, RiskLevel, SecurityEvent, SecurityEventType};
 
 #[derive(Debug, Deserialize)]
 pub struct StartBackgroundRequest {
@@ -60,9 +58,7 @@ pub async fn handle_start_background(
                 .as_secs()
         )
     });
-    let event_session_id = payload
-        .evolve_session_id
-        .unwrap_or_else(|| session.clone());
+    let event_session_id = payload.evolve_session_id.unwrap_or_else(|| session.clone());
 
     let surface = {
         let manager = evolve_mgr.lock().await;

@@ -4,8 +4,8 @@ use super::{
     FeedbackStatus, RiskLevel, SecurityEvent, ShadowAttackPath, StateTransitionError,
 };
 use serde::Serialize;
-use std::path::Path;
 use std::collections::{HashMap, VecDeque};
+use std::path::Path;
 
 const DEFAULT_EVENT_CAPACITY: usize = 1024;
 const DEFAULT_SESSION_ID: &str = "runtime-default";
@@ -98,7 +98,8 @@ impl EvolveManager {
         severity: u8,
         path: Option<String>,
     ) -> Result<FeedbackEvent, FeedbackError> {
-        self.feedback.observe(category, technique, evidence, severity, path)
+        self.feedback
+            .observe(category, technique, evidence, severity, path)
     }
 
     pub fn activate_feedback_from_canary(
@@ -123,7 +124,7 @@ impl EvolveManager {
 
     pub fn sessions(&self) -> Vec<EvolveSession> {
         let mut sessions: Vec<_> = self.sessions.values().cloned().collect();
-        sessions.sort_by(|left, right| left.created_at_ms.cmp(&right.created_at_ms));
+        sessions.sort_by_key(|session| session.created_at_ms);
         sessions
     }
 
@@ -197,10 +198,7 @@ impl EvolveManager {
         Ok(())
     }
 
-    pub fn mark_deception_active(
-        &mut self,
-        session_id: &str,
-    ) -> Result<(), StateTransitionError> {
+    pub fn mark_deception_active(&mut self, session_id: &str) -> Result<(), StateTransitionError> {
         if self.state == EvolveState::Suspect {
             self.transition(EvolveState::Engage)?;
         }
@@ -312,9 +310,7 @@ impl EvolveManager {
                     .get(&session_id)
                     .cloned()
                     .is_some_and(|path| {
-                        self.deception
-                            .sync_attack_path(&session_id, &path)
-                            .is_err()
+                        self.deception.sync_attack_path(&session_id, &path).is_err()
                     })
             } else {
                 false
@@ -394,10 +390,7 @@ mod tests {
         let event = SecurityEvent::new(EventSource::Canary, SecurityEventType::CanaryAccess)
             .with_risk_hint(RiskLevel::High);
 
-        assert_eq!(
-            manager.ingest_event(event),
-            EvolveDecision::LegacyIsolate
-        );
+        assert_eq!(manager.ingest_event(event), EvolveDecision::LegacyIsolate);
         assert_eq!(manager.recent_events(10).len(), 1);
     }
 
@@ -433,10 +426,7 @@ mod tests {
         let event = SecurityEvent::new(EventSource::Canary, SecurityEventType::CanaryAccess)
             .with_risk_hint(RiskLevel::High);
 
-        assert_eq!(
-            manager.ingest_event(event),
-            EvolveDecision::EngageDeception
-        );
+        assert_eq!(manager.ingest_event(event), EvolveDecision::EngageDeception);
         assert_eq!(manager.state(), EvolveState::Suspect);
     }
 
@@ -452,7 +442,10 @@ mod tests {
 
         manager.begin_deception_engagement("session-a").unwrap();
         assert_eq!(manager.state(), EvolveState::Engage);
-        assert_eq!(manager.session_state("session-a"), Some(EvolveState::Engage));
+        assert_eq!(
+            manager.session_state("session-a"),
+            Some(EvolveState::Engage)
+        );
     }
 
     #[test]
@@ -465,10 +458,7 @@ mod tests {
         let event = SecurityEvent::new(EventSource::Canary, SecurityEventType::CanaryAccess)
             .with_session_id("session-a")
             .with_risk_hint(RiskLevel::High);
-        assert_eq!(
-            manager.ingest_event(event),
-            EvolveDecision::EngageDeception
-        );
+        assert_eq!(manager.ingest_event(event), EvolveDecision::EngageDeception);
         manager.prepare_deception_for_session("session-a").unwrap();
         manager.mark_deception_active("session-a").unwrap();
 
@@ -487,14 +477,12 @@ mod tests {
         let mut manager = EvolveManager::new();
         manager.set_enabled(true);
 
-        let discovery =
-            SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
-                .with_session_id("session-a")
-                .with_command("whoami");
-        let network =
-            SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
-                .with_session_id("session-a")
-                .with_command("curl https://example.com");
+        let discovery = SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
+            .with_session_id("session-a")
+            .with_command("whoami");
+        let network = SecurityEvent::new(EventSource::Process, SecurityEventType::ProcessExec)
+            .with_session_id("session-a")
+            .with_command("curl https://example.com");
 
         assert_eq!(manager.ingest_event(discovery), EvolveDecision::Observe);
         assert_eq!(
@@ -543,10 +531,7 @@ mod tests {
         let high = SecurityEvent::new(EventSource::Canary, SecurityEventType::CanaryAccess)
             .with_session_id("session-a")
             .with_risk_hint(RiskLevel::High);
-        assert_eq!(
-            manager.ingest_event(high),
-            EvolveDecision::EngageDeception
-        );
+        assert_eq!(manager.ingest_event(high), EvolveDecision::EngageDeception);
         manager.prepare_deception_for_session("session-a").unwrap();
         manager.mark_deception_active("session-a").unwrap();
 

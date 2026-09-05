@@ -62,9 +62,7 @@ impl DeceptionProfile {
             {
                 return Self::DatabaseHost;
             }
-            if resource.contains(".github")
-                || resource.contains("gitlab")
-                || command.contains("ci")
+            if resource.contains(".github") || resource.contains("gitlab") || command.contains("ci")
             {
                 return Self::CiRunner;
             }
@@ -267,46 +265,6 @@ fn validate_service(service: &DeceptionService) -> Result<(), DeceptionError> {
     }
 }
 
-fn planned_services(profile: DeceptionProfile) -> Vec<DeceptionService> {
-    let specs: &[(&str, &str, u16, &str)] = match profile {
-        DeceptionProfile::DeveloperWorkstation => {
-            &[("dev-api", "dev-api.prod.internal", 18080, "http")]
-        }
-        DeceptionProfile::CiRunner => {
-            &[("artifact-api", "artifacts.prod.internal", 18081, "http")]
-        }
-        DeceptionProfile::ApplicationServer => {
-            &[("app-http", "app.prod.internal", 18082, "http")]
-        }
-        DeceptionProfile::DatabaseHost => {
-            &[("postgres", "db-prod.internal", 18432, "postgres")]
-        }
-        DeceptionProfile::KubernetesNode => {
-            &[("kube-api", "control-plane.internal", 18084, "http")]
-        }
-        DeceptionProfile::BastionHost => {
-            &[("sshd", "bastion.prod.internal", 18022, "ssh")]
-        }
-        DeceptionProfile::SecretsService => {
-            &[("vault", "vault.prod.internal", 18200, "http")]
-        }
-        DeceptionProfile::InternalApi => {
-            &[("internal-api", "api.prod.internal", 18083, "http")]
-        }
-    };
-
-    specs
-        .iter()
-        .map(|(name, hostname, port, protocol)| DeceptionService {
-            name: (*name).to_string(),
-            hostname: (*hostname).to_string(),
-            bind_host: "127.0.0.1".to_string(),
-            port: *port,
-            protocol: (*protocol).to_string(),
-        })
-        .collect()
-}
-
 fn materialize_profile(
     root: &Path,
     profile: DeceptionProfile,
@@ -438,10 +396,7 @@ fn write_file(root: &Path, relative: &str, value: &str) -> Result<(), std::io::E
     make_session_file_writable(&path)
 }
 
-fn sync_path_projection(
-    root: &Path,
-    path: &ShadowAttackPath,
-) -> Result<(), DeceptionError> {
+fn sync_path_projection(root: &Path, path: &ShadowAttackPath) -> Result<(), DeceptionError> {
     let visible_nodes = path.visible_nodes();
 
     let mut hosts = String::from("127.0.0.1 localhost\n::1 localhost\n");
@@ -479,11 +434,7 @@ fn sync_path_projection(
         .get(&path.active_node_id)
         .map(|node| node.hostname.clone())
         .unwrap_or_else(|| path.narrative.hostname.clone());
-    write_file(
-        root,
-        "ops/current-node",
-        &format!("{}\n", active),
-    )?;
+    write_file(root, "ops/current-node", &format!("{}\n", active))?;
     Ok(())
 }
 
@@ -498,7 +449,11 @@ fn materialize_synthetic_etc(
 
     write_file(root, "etc/hosts", &hosts)?;
     write_file(root, "etc/hostname", "prod-app-01\n")?;
-    write_file(root, "etc/nsswitch.conf", "hosts: files\npasswd: files\ngroup: files\n")?;
+    write_file(
+        root,
+        "etc/nsswitch.conf",
+        "hosts: files\npasswd: files\ngroup: files\n",
+    )?;
     write_file(
         root,
         "etc/passwd",
@@ -508,20 +463,20 @@ fn materialize_synthetic_etc(
     Ok(())
 }
 
-fn restrict_staging_root(path: &Path) -> Result<(), std::io::Error> {
+fn restrict_staging_root(_path: &Path) -> Result<(), std::io::Error> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+        fs::set_permissions(_path, fs::Permissions::from_mode(0o700))?;
     }
     Ok(())
 }
 
-fn make_session_directory_writable(path: &Path) -> Result<(), std::io::Error> {
+fn make_session_directory_writable(_path: &Path) -> Result<(), std::io::Error> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o777))?;
+        fs::set_permissions(_path, fs::Permissions::from_mode(0o777))?;
     }
     Ok(())
 }

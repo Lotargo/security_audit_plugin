@@ -37,9 +37,7 @@ pub fn deception_exec_identity() -> (u32, u32) {
 
 pub fn audit_identity_conflicts_with_reserved_runtime_uid() -> bool {
     configured_audit_exec_identity()
-        .map(|(uid, _)| {
-            uid == TOR_EXEC_UID || uid == BROWSER_EXEC_UID || uid == DECEPTION_EXEC_UID
-        })
+        .map(|(uid, _)| uid == TOR_EXEC_UID || uid == BROWSER_EXEC_UID || uid == DECEPTION_EXEC_UID)
         .unwrap_or(false)
 }
 

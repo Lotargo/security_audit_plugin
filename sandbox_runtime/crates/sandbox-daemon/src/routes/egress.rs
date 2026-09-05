@@ -12,9 +12,7 @@ use sandbox_kernel::containment::apply_runtime_containment_with_agent_allowlist;
 use sandbox_kernel::egress::{is_valid_ip_or_cidr, EgressConfig, EgressError, EgressManager};
 use sandbox_kernel::panic::KillSwitch;
 use sandbox_kernel::stop_tor_best_effort;
-use sandbox_kernel::{
-    EventSource, EvolveManager, RiskLevel, SecurityEvent, SecurityEventType,
-};
+use sandbox_kernel::{EventSource, EvolveManager, RiskLevel, SecurityEvent, SecurityEventType};
 
 #[derive(Debug, Deserialize)]
 pub struct EmergencyIsolateRequest {
@@ -221,6 +219,10 @@ mod tests {
 
     #[test]
     fn emergency_isolation_latch_rejects_reprovisioning() {
+        // Exercise the latch without CAP_NET_ADMIN: cfg(test) does not propagate
+        // to the sandbox-kernel dependency, so the privileged nft path is skipped
+        // via explicit opt-in rather than a compile-time gate.
+        std::env::set_var("SECURITY_AUDIT_SKIP_PRIVILEGED_NET", "1");
         KillSwitch::reset_isolation();
         KillSwitch::trigger("unit test isolation latch").unwrap();
         let (status, body) =

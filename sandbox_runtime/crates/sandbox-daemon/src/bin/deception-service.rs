@@ -103,10 +103,7 @@ async fn handle_connection(
     Ok(())
 }
 
-async fn handle_http(
-    stream: &mut TcpStream,
-    config: &ServiceConfig,
-) -> Result<(), std::io::Error> {
+async fn handle_http(stream: &mut TcpStream, config: &ServiceConfig) -> Result<(), std::io::Error> {
     let mut request = [0_u8; 4096];
     let _ = tokio::time::timeout(Duration::from_secs(3), stream.read(&mut request)).await;
 
@@ -132,11 +129,7 @@ async fn handle_ssh(stream: &mut TcpStream) -> Result<(), std::io::Error> {
         .write_all(b"SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.14\r\n")
         .await?;
     let mut client_banner = [0_u8; 512];
-    let _ = tokio::time::timeout(
-        Duration::from_secs(3),
-        stream.read(&mut client_banner),
-    )
-    .await;
+    let _ = tokio::time::timeout(Duration::from_secs(3), stream.read(&mut client_banner)).await;
     stream.shutdown().await
 }
 

@@ -6,8 +6,8 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
 use tokio::process::Command;
+use tokio::sync::Mutex;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
 
@@ -19,10 +19,9 @@ use crate::surface_guard::{resolve_agent_surface, AgentSurface};
 use sandbox_kernel::audit_exec_identity;
 use sandbox_kernel::tmux::TmuxManager;
 use sandbox_kernel::watchdog::{process_command_output, WatchdogResult};
-use sandbox_kernel::{
-    EventSource, EvolveManager, RiskLevel, SecurityEvent, SecurityEventType,
-};
+use sandbox_kernel::{EventSource, EvolveManager, RiskLevel, SecurityEvent, SecurityEventType};
 
+#[cfg(not(target_os = "windows"))]
 const SAFE_CHILD_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +48,9 @@ pub struct InteractiveTmuxRequest {
     pub evolve_session_id: Option<String>,
 }
 
+// Eight telemetry fields map 1:1 onto SecurityEvent builders; bundling them into
+// a struct would churn every call site for no behavior gain.
+#[allow(clippy::too_many_arguments)]
 fn emit_exec_event(
     event_sink: &EvolveEventSink,
     session_id: Option<&str>,
