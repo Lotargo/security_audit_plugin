@@ -13,8 +13,8 @@ struct ServiceConfig {
     port: u16,
     protocol: String,
     service: String,
-    profile: String,
-    session: String,
+    _profile: String,
+    _session: String,
 }
 
 #[tokio::main]
@@ -82,9 +82,9 @@ fn parse_args() -> Result<ServiceConfig, Box<dyn std::error::Error>> {
             .ok_or_else(|| IoError::new(ErrorKind::InvalidInput, "missing --protocol"))?,
         service: service
             .ok_or_else(|| IoError::new(ErrorKind::InvalidInput, "missing --service"))?,
-        profile: profile
+        _profile: profile
             .ok_or_else(|| IoError::new(ErrorKind::InvalidInput, "missing --profile"))?,
-        session: session
+        _session: session
             .ok_or_else(|| IoError::new(ErrorKind::InvalidInput, "missing --session"))?,
     })
 }
@@ -119,10 +119,8 @@ async fn handle_http(
         "status": "ok",
         "environment": "production",
         "service": config.service,
-        "profile": config.profile,
-        "node": format!("{}.shadow.internal", config.service),
-        "session_marker": config.session,
-        "synthetic": true
+        "node": format!("{}.internal", config.service),
+        "region": "eu-central-1"
     });
     let body = serde_json::to_vec(&payload).unwrap_or_else(|_| b"{\"status\":\"ok\"}".to_vec());
     let headers = format!(

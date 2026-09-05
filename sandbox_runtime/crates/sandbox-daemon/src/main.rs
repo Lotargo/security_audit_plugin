@@ -112,9 +112,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         evolve_event_sink.sender(),
     )));
 
-    // Canary and future sensors publish facts into the Evolve event pipeline. The Evolve manager
-    // decides the reaction. Until Deception Fabric exists, high-risk events intentionally retain
-    // the existing fail-closed isolation behavior.
+    // Sensors publish facts into the Evolve event pipeline and the manager decides the reaction.
+    // Deception Fabric can now be prepared and exercised explicitly, but automatic redirection is
+    // not enabled until a session-level real-to-shadow boundary can be proven safe.
     let evolve_event_manager = evolve_mgr.clone();
     tokio::spawn(async move {
         while let Some(event) = evolve_event_rx.recv().await {

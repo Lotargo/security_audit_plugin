@@ -169,17 +169,21 @@ pub async fn handle_deception_status(
     Extension(deception_runtime): Extension<Arc<Mutex<DeceptionRuntime>>>,
     Query(query): Query<DeceptionStatusQuery>,
 ) -> Json<serde_json::Value> {
-    let runtime = deception_runtime.lock().await;
     if let Some(session_id) = query.session_id.as_deref() {
         let instance = {
             let manager = evolve_mgr.lock().await;
             manager.deception_instance(session_id)
         };
+        let runtime_status = {
+            let runtime = deception_runtime.lock().await;
+            runtime.status(session_id)
+        };
         Json(json!({
             "instance": instance,
-            "runtime": runtime.status(session_id)
+            "runtime": runtime_status
         }))
     } else {
+        let runtime = deception_runtime.lock().await;
         Json(json!({"runtimes": runtime.statuses()}))
     }
 }

@@ -118,16 +118,22 @@ impl DeceptionRuntime {
         }
 
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-        for running in &mut started {
+        let failed_service = started.iter_mut().find_map(|running| {
             if running.child.try_wait().ok().flatten().is_some() {
-                for child in &mut started {
-                    let _ = child.child.kill().await;
-                    let _ = child.child.wait().await;
-                }
-                return Err(DeceptionRuntimeError::EarlyExit(
-                    running.descriptor.name.clone(),
-                ));
+                Some(running.descriptor.name.clone())
+            } else {
+                None
             }
+        });
+
+        if let Some(service_name) = failed_service {
+            for running in &mut started {
+                if running.child.try_wait().ok().flatten().is_none() {
+                    let _ = running.child.kill().await;
+                }
+                let _ = running.child.wait().await;
+            }
+            return Err(DeceptionRuntimeError::EarlyExit(service_name));
         }
 
         self.sessions.insert(instance.session_id.clone(), started);
