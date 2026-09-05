@@ -159,10 +159,10 @@ impl EvolveManager {
             let _ = self.transition(EvolveState::Suspect);
         }
 
-        if let Some(session) = self.sessions.get_mut(session_id) {
-            if session.state == EvolveState::Observe {
-                session.state = EvolveState::Suspect;
-            }
+        if let Some(session) = self.sessions.get_mut(session_id)
+            && session.state == EvolveState::Observe
+        {
+            session.state = EvolveState::Suspect;
         }
     }
 
