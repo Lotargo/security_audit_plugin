@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::deception_exec;
+use crate::deception_fs;
 use crate::deception_runtime::DeceptionRuntime;
 use sandbox_kernel::EvolveManager;
 
@@ -33,6 +34,19 @@ pub struct DeceptionExecRequest {
     pub session_id: String,
     pub command: String,
     pub timeout_secs: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeceptionFsReadRequest {
+    pub session_id: String,
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeceptionFsWriteRequest {
+    pub session_id: String,
+    pub path: String,
+    pub content: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -262,6 +276,68 @@ pub async fn handle_deception_exec(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": format!("Deception execution failed: {}", error)})),
+            )
+        })
+}
+
+pub async fn handle_deception_fs_read(
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
+    Json(payload): Json<DeceptionFsReadRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let instance = {
+        let manager = evolve_mgr.lock().await;
+        if manager.session_state(&payload.session_id) != Some(sandbox_kernel::EvolveState::Deceive) {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(json!({"error": "deception filesystem is available only in DECEIVE state"})),
+            ));
+        }
+        manager.deception_instance(&payload.session_id).ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "deception instance not found"})),
+            )
+        })?
+    };
+
+    deception_fs::read_file(&instance, &payload.path)
+        .await
+        .map(|result| Json(json!(result)))
+        .map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": format!("Deception file read failed: {}", error)})),
+            )
+        })
+}
+
+pub async fn handle_deception_fs_write(
+    Extension(evolve_mgr): Extension<Arc<Mutex<EvolveManager>>>,
+    Json(payload): Json<DeceptionFsWriteRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let instance = {
+        let manager = evolve_mgr.lock().await;
+        if manager.session_state(&payload.session_id) != Some(sandbox_kernel::EvolveState::Deceive) {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(json!({"error": "deception filesystem is available only in DECEIVE state"})),
+            ));
+        }
+        manager.deception_instance(&payload.session_id).ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "deception instance not found"})),
+            )
+        })?
+    };
+
+    deception_fs::write_file(&instance, &payload.path, &payload.content)
+        .await
+        .map(|result| Json(json!(result)))
+        .map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": format!("Deception file write failed: {}", error)})),
             )
         })
 }

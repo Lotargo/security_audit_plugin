@@ -492,13 +492,66 @@ export class SandboxBridge {
     });
   }
 
-  public fsRead(relPath: string): { path: string; content: string } {
-    const safePath = this.jail.resolveSafePath(relPath);
-    if (!fs.existsSync(safePath)) throw new Error(`File not found: ${relPath}`);
-    return { path: this.jail.toRelativePosix(safePath), content: fs.readFileSync(safePath, 'utf-8') };
+  private async resolveFilesystemSurface(): Promise<'real' | 'deception'> {
+    const [status, sessions] = await Promise.all([
+      this.getEvolveStatus(),
+      this.getEvolveSessions(),
+    ]);
+
+    const runtimeState = status?.runtime?.state ?? status?.state;
+    const session = Array.isArray(sessions?.sessions)
+      ? sessions.sessions.find((item: any) => item.session_id === this.activeEvolveSessionId)
+      : undefined;
+
+    if (runtimeState === 'ISOLATE' || session?.state === 'ISOLATE') {
+      throw new Error('Filesystem access is blocked while the sandbox is isolated');
+    }
+    if (session?.state === 'DECEIVE') {
+      return 'deception';
+    }
+    if (runtimeState === 'DECEIVE' && !session) {
+      throw new Error('Unable to prove filesystem surface for the active Evolve session');
+    }
+    return 'real';
   }
 
-  public fsWrite(relPath: string, content: string): { path: string; bytesWritten: number } {
+  public async fsRead(relPath: string): Promise<{ path: string; content: string }> {
+    const surface = await this.resolveFilesystemSurface();
+    if (surface === 'deception') {
+      return this.request('POST', '/evolve/deception/fs/read', {
+        session_id: this.activeEvolveSessionId,
+        path: relPath,
+      });
+    }
+
+    const safePath = this.jail.resolveSafePath(relPath);
+    if (!fs.existsSync(safePath)) throw new Error(`File not found: ${relPath}`);
+    return {
+      path: this.jail.toRelativePosix(safePath),
+      content: fs.readFileSync(safePath, 'utf-8'),
+    };
+  }
+
+  public async fsWrite(
+    relPath: string,
+    content: string
+  ): Promise<{ path: string; bytesWritten: number }> {
+    const surface = await this.resolveFilesystemSurface();
+    if (surface === 'deception') {
+      const result = await this.request<{
+        path: string;
+        bytes_written: number;
+      }>('POST', '/evolve/deception/fs/write', {
+        session_id: this.activeEvolveSessionId,
+        path: relPath,
+        content,
+      });
+      return {
+        path: result.path,
+        bytesWritten: result.bytes_written,
+      };
+    }
+
     const safePath = this.jail.resolveSafePath(relPath);
     const dir = path.dirname(safePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });

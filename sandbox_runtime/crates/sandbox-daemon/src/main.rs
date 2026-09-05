@@ -15,6 +15,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod auth;
 mod deception_exec;
+mod deception_fs;
 mod deception_runtime;
 mod deception_sandbox;
 mod evolve_events;
@@ -340,6 +341,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route(
             "/evolve/deception/exec",
             post(routes::evolve::handle_deception_exec),
+        )
+        .route(
+            "/evolve/deception/fs/read",
+            post(routes::evolve::handle_deception_fs_read),
+        )
+        .route(
+            "/evolve/deception/fs/write",
+            post(routes::evolve::handle_deception_fs_write),
         )
         .route("/http_probe", post(routes::probe::handle_http_probe))
         .route(

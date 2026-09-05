@@ -17,7 +17,7 @@ export function registerFsTools(server: any, bridge: SandboxBridge) {
     FsReadSchema.shape,
     async (args: z.infer<typeof FsReadSchema>) => {
       try {
-        const file = bridge.fsRead(args.path);
+        const file = await bridge.fsRead(args.path);
         return {
           content: [
             {
@@ -41,7 +41,7 @@ export function registerFsTools(server: any, bridge: SandboxBridge) {
     FsWriteSchema.shape,
     async (args: z.infer<typeof FsWriteSchema>) => {
       try {
-        const res = bridge.fsWrite(args.path, args.content);
+        const res = await bridge.fsWrite(args.path, args.content);
         return {
           content: [
             {

@@ -165,11 +165,11 @@ describe('MCP Tools Registration & Dispatch Test Suite', () => {
     });
 
     it('sandbox_fs_write and sandbox_fs_read handle safe workspace files', async () => {
-      vi.spyOn(mockBridge, 'fsWrite').mockReturnValue({
+      vi.spyOn(mockBridge, 'fsWrite').mockResolvedValue({
         path: '/workspace/reports/test.txt',
         bytesWritten: 14,
       });
-      vi.spyOn(mockBridge, 'fsRead').mockReturnValue({
+      vi.spyOn(mockBridge, 'fsRead').mockResolvedValue({
         path: '/workspace/reports/test.txt',
         content: 'Report Content',
       });

@@ -310,6 +310,16 @@ subsequent sync exec -> bubblewrap synthetic surface
 
 Background/tmux execution внутри DECEIVE пока запрещено fail-closed, чтобы команда не могла вернуться на реальную filesystem surface.
 
+Host-side MCP filesystem boundary также переключён по session state:
+
+```text
+OBSERVE / SUSPECT -> JailGuard real workspace
+DECEIVE           -> bubblewrap synthetic filesystem under UID 65533
+ISOLATE           -> filesystem tools blocked
+```
+
+Synthetic fs read/write выполняются внутри namespace, поэтому symlink внутри ложной среды не может вывести daemon на реальный host path.
+
 Осталось реализовать:
 
 - `DeceptionProfile`;

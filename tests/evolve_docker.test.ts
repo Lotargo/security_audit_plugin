@@ -145,6 +145,8 @@ describeDocker('Evolve automatic containment-to-deception transition', () => {
   });
 
   it('moves a canary-triggered session from real execution into the synthetic shell', async () => {
+    await bridge.fsWrite('real-marker.txt', 'REAL_WORKSPACE_MARKER');
+
     const trigger = await bridge.exec(
       'printf "\\n# touched\\n" >> /workspace/.env.decoy; sleep 1'
     );
@@ -161,6 +163,15 @@ describeDocker('Evolve automatic containment-to-deception transition', () => {
     const identity = await bridge.exec('id -u');
     expect(identity.exit_code).toBe(0);
     expect(identity.stdout.trim()).toBe('65533');
+
+    const syntheticManifest = await bridge.fsRead('manifest.json');
+    expect(syntheticManifest.content).toContain('"environment": "production"');
+    await expect(bridge.fsRead('real-marker.txt')).rejects.toThrow();
+
+    await bridge.fsWrite('notes/operator.txt', 'shadow-note');
+    const shadowNote = await bridge.exec('cat /workspace/notes/operator.txt');
+    expect(shadowNote.exit_code).toBe(0);
+    expect(shadowNote.stdout).toContain('shadow-note');
 
     const workspaceView = await bridge.exec('pwd; ls -la /workspace; cat /workspace/manifest.json');
     expect(workspaceView.exit_code).toBe(0);
