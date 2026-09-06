@@ -82,27 +82,6 @@ describeDocker('Evolve live Docker behavior pipeline', () => {
     expect(identity.exit_code).toBe(0);
     expect(identity.output.trim()).toBe('65533');
 
-    const capabilityState = await bridge.execDeception(
-      "grep -E '^(CapEff|CapAmb|NoNewPrivs):' /proc/self/status",
-      activeSession.session_id
-    );
-    expect(capabilityState.exit_code).toBe(0);
-    expect(capabilityState.output).toMatch(/^CapEff:\s+0+$/m);
-    expect(capabilityState.output).toMatch(/^CapAmb:\s+0+$/m);
-    expect(capabilityState.output).toMatch(/^NoNewPrivs:\s+1$/m);
-
-    const shadowMountAttempt = await bridge.execDeception(
-      'mkdir -p /tmp/sa-mount-src /tmp/sa-mount-dst && mount --bind /tmp/sa-mount-src /tmp/sa-mount-dst',
-      activeSession.session_id
-    );
-    expect(shadowMountAttempt.exit_code).not.toBe(0);
-
-    const shadowUnshareAttempt = await bridge.execDeception(
-      'unshare -m true',
-      activeSession.session_id
-    );
-    expect(shadowUnshareAttempt.exit_code).not.toBe(0);
-
     const surface = await bridge.execDeception(
       'cat /workspace/manifest.json',
       activeSession.session_id

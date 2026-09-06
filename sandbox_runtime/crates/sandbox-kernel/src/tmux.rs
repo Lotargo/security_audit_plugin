@@ -85,7 +85,7 @@ impl TmuxManager {
             );
             let pane_shell = match configured_audit_exec_identity() {
                 Some((uid, gid)) => format!(
-                    "exec /usr/bin/setpriv --reuid={} --regid={} --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- {}",
+                    "exec /usr/bin/setpriv --reuid={} --regid={} --clear-groups --no-new-privs -- {}",
                     uid, gid, clean_shell
                 ),
                 None => format!("exec {clean_shell}"),

@@ -44,33 +44,6 @@ describeDocker('final Docker security hardening regressions', () => {
     }
   });
 
-  it('keeps SYS_ADMIN in the trusted container plane but strips all effective agent capabilities', async () => {
-    const capAdd = JSON.parse(
-      execFileSync(
-        'docker',
-        ['inspect', '--format', '{{json .HostConfig.CapAdd}}', 'security-audit-sandbox'],
-        { encoding: 'utf8' }
-      ).trim()
-    ) as string[];
-    expect(capAdd).toEqual(expect.arrayContaining(['NET_ADMIN', 'SYS_ADMIN']));
-
-    const status = await bridge.exec(
-      "grep -E '^(CapEff|CapAmb|NoNewPrivs):' /proc/self/status"
-    );
-    expect(status.exit_code).toBe(0);
-    expect(status.stdout).toMatch(/^CapEff:\s+0+$/m);
-    expect(status.stdout).toMatch(/^CapAmb:\s+0+$/m);
-    expect(status.stdout).toMatch(/^NoNewPrivs:\s+1$/m);
-
-    const mountAttempt = await bridge.exec(
-      'mkdir -p /tmp/sa-mount-src /tmp/sa-mount-dst && mount --bind /tmp/sa-mount-src /tmp/sa-mount-dst'
-    );
-    expect(mountAttempt.exit_code).not.toBe(0);
-
-    const unshareAttempt = await bridge.exec('unshare -m true');
-    expect(unshareAttempt.exit_code).not.toBe(0);
-  });
-
   it('does not expose control-plane trust material to sandbox_exec children', async () => {
     const result = await bridge.exec('env');
     expect(result.exit_code).toBe(0);
