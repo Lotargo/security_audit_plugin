@@ -194,6 +194,7 @@ impl EvolveManager {
                 to: EvolveState::Engage,
             });
         }
+        session.real_surface_revoked = true;
 
         Ok(())
     }
@@ -216,6 +217,7 @@ impl EvolveManager {
             .get_mut(session_id)
             .ok_or_else(|| StateTransitionError::MissingSession(session_id.to_string()))?;
 
+        session.real_surface_revoked = true;
         if session.state == EvolveState::Deceive {
             return Ok(());
         }
@@ -230,6 +232,19 @@ impl EvolveManager {
         }
         session.state = EvolveState::Deceive;
         Ok(())
+    }
+
+    /// Checks whether the REAL filesystem surface has been revoked for the given session.
+    /// If session_id is None, returns true if ANY session has had its REAL surface revoked.
+    pub fn is_real_surface_revoked(&self, session_id: Option<&str>) -> bool {
+        if let Some(id) = session_id {
+            self.sessions
+                .get(id)
+                .map(|s| s.real_surface_revoked)
+                .unwrap_or(false)
+        } else {
+            self.sessions.values().any(|s| s.real_surface_revoked)
+        }
     }
 
     pub fn destroy_deception_for_session(

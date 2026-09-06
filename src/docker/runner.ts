@@ -41,6 +41,14 @@ export function findSandboxRuntimeDir(): string | null {
   return null;
 }
 
+export function findSandboxSeccompProfile(): string | null {
+  const runtimeDir = findSandboxRuntimeDir();
+  if (!runtimeDir) return null;
+
+  const profilePath = path.join(runtimeDir, 'seccomp', 'evolve-bwrap.json');
+  return fs.existsSync(profilePath) ? profilePath : null;
+}
+
 export class DockerRunner {
   private containerName: string;
   private imageName: string;
@@ -197,6 +205,14 @@ export class DockerRunner {
     if (!this.isDockerAvailable()) throw new Error('Docker daemon is not running or inaccessible.');
 
     await this.ensureImageAvailable();
+
+    const seccompProfile = findSandboxSeccompProfile();
+    if (!seccompProfile) {
+      throw new Error(
+        'Required sandbox seccomp profile is missing. Refusing to start with an unconfined or implicit fallback.'
+      );
+    }
+
     this.stop();
 
     const args = [
@@ -205,7 +221,9 @@ export class DockerRunner {
       '--name',
       this.containerName,
       '--cap-add=NET_ADMIN',
+      '--cap-add=SYS_ADMIN',
       '--security-opt=no-new-privileges:true',
+      `--security-opt=seccomp=${seccompProfile}`,
       `--pids-limit=${this.pidsLimit}`,
       `--memory=${this.memoryLimit}`,
       '-p',

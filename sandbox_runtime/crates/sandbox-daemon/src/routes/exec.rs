@@ -1,8 +1,6 @@
 use axum::{http::StatusCode, Extension, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -230,13 +228,19 @@ pub async fn handle_execute(
     #[cfg(not(target_os = "windows"))]
     let mut cmd = {
         use std::process::Stdio;
-        let mut c = Command::new("/bin/sh");
-        c.args(["-c", &command_text]);
         let (uid, gid) = audit_exec_identity();
-        #[cfg(unix)]
-        {
-            c.as_std_mut().uid(uid).gid(gid);
-        }
+        let mut c = Command::new("/usr/bin/setpriv");
+        c.arg(format!("--reuid={uid}"))
+            .arg(format!("--regid={gid}"))
+            .arg("--clear-groups")
+            .arg("--bounding-set=-all")
+            .arg("--inh-caps=-all")
+            .arg("--ambient-caps=-all")
+            .arg("--no-new-privs")
+            .arg("--")
+            .arg("/bin/sh")
+            .arg("-c")
+            .arg(&command_text);
         c.env_clear();
         c.env("HOME", "/tmp");
         c.env("PATH", SAFE_CHILD_PATH);

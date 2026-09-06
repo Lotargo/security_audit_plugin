@@ -25,6 +25,15 @@ pub struct CanaryTrap {
     pub description: String,
 }
 
+#[derive(Debug, Clone)]
+struct CanaryBaseline {
+    path: PathBuf,
+    trap_type: String,
+    len: u64,
+    accessed: Option<std::time::SystemTime>,
+    modified: Option<std::time::SystemTime>,
+}
+
 pub struct CanaryManager {
     traps: Vec<CanaryTrap>,
     is_armed: Arc<AtomicBool>,
@@ -170,13 +179,34 @@ users:
         self.is_armed.store(true, Ordering::SeqCst);
         let generation = self.watch_generation.fetch_add(1, Ordering::SeqCst) + 1;
 
-        self.spawn_watcher(planted.clone(), session_id, generation);
+        // Capture baseline metadata synchronously BEFORE returning from arm.
+        // This eliminates the race condition where callers modify the canary immediately
+        // after arming, causing an async watcher to capture the modified file as baseline.
+        let mut initial_meta = Vec::with_capacity(planted.len());
+        for trap in &planted {
+            if let Ok(meta) = std::fs::metadata(&trap.file_path) {
+                initial_meta.push(CanaryBaseline {
+                    path: trap.file_path.clone(),
+                    trap_type: trap.trap_type.clone(),
+                    len: meta.len(),
+                    accessed: meta.accessed().ok(),
+                    modified: meta.modified().ok(),
+                });
+            }
+        }
+
+        self.spawn_watcher(initial_meta, session_id, generation);
 
         info!("Armed {} canary honeytoken tripwires.", planted.len());
         Ok(planted)
     }
 
-    fn spawn_watcher(&self, traps: Vec<CanaryTrap>, session_id: Option<String>, generation: u64) {
+    fn spawn_watcher(
+        &self,
+        initial_meta: Vec<CanaryBaseline>,
+        session_id: Option<String>,
+        generation: u64,
+    ) {
         let is_armed = self.is_armed.clone();
         let triggered_count = self.triggered_count.clone();
         let watch_generation = self.watch_generation.clone();
@@ -187,32 +217,25 @@ users:
 
             // Phase 8.1 keeps the existing metadata polling source and decouples its reaction.
             // EVENT_MODEL.md tracks the later migration to fanotify/inotify.
-            let mut initial_meta: Vec<(PathBuf, String, u64, Option<std::time::SystemTime>)> =
-                Vec::new();
-            for trap in &traps {
-                if let Ok(meta) = std::fs::metadata(&trap.file_path) {
-                    initial_meta.push((
-                        trap.file_path.clone(),
-                        trap.trap_type.clone(),
-                        meta.len(),
-                        meta.accessed().ok(),
-                    ));
-                }
-            }
-
             while is_armed.load(Ordering::SeqCst)
                 && watch_generation.load(Ordering::SeqCst) == generation
             {
                 tokio::time::sleep(Duration::from_millis(500)).await;
 
-                for (path, trap_type, orig_len, orig_accessed) in &initial_meta {
-                    if let Ok(meta) = std::fs::metadata(path) {
+                for baseline in &initial_meta {
+                    if let Ok(meta) = std::fs::metadata(&baseline.path) {
                         let current_len = meta.len();
                         let current_accessed = meta.accessed().ok();
+                        let current_modified = meta.modified().ok();
 
-                        let modified = current_len != *orig_len;
-                        let accessed = match (orig_accessed, current_accessed) {
-                            (Some(orig), Some(curr)) => curr > *orig,
+                        let len_changed = current_len != baseline.len;
+                        let mtime_changed = match (baseline.modified, current_modified) {
+                            (Some(orig), Some(curr)) => curr != orig,
+                            _ => false,
+                        };
+                        let modified = len_changed || mtime_changed;
+                        let accessed = match (baseline.accessed, current_accessed) {
+                            (Some(orig), Some(curr)) => curr > orig,
                             _ => false,
                         };
 
@@ -220,8 +243,8 @@ users:
                             handle_canary_trigger(
                                 event_sender.as_ref(),
                                 triggered_count.as_ref(),
-                                path,
-                                trap_type,
+                                &baseline.path,
+                                &baseline.trap_type,
                                 session_id.as_deref(),
                             );
                             if watch_generation.load(Ordering::SeqCst) == generation {
@@ -344,5 +367,71 @@ mod tests {
         assert_eq!(event.resource.as_deref(), Some("/workspace/.env.decoy"));
         assert_eq!(event.session_id.as_deref(), Some("audit-session-1"));
         assert_eq!(event.risk_hint, Some(RiskLevel::High));
+    }
+
+    #[tokio::test]
+    async fn immediate_modification_detected_without_race() {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let mut manager = CanaryManager::with_event_sender(sender);
+
+        let traps = manager
+            .arm_canaries_for_session(temp_dir.path(), Some("session-test".to_string()))
+            .await
+            .unwrap();
+
+        // Immediately touch/modify one of the traps without delay
+        let env_decoy = traps.iter().find(|t| t.trap_type == "env_secrets").unwrap();
+        tokio::fs::write(&env_decoy.file_path, "MODIFIED_IMMEDIATELY")
+            .await
+            .unwrap();
+
+        // The watcher polls every 500ms, wait for it
+        let event = tokio::time::timeout(Duration::from_secs(3), receiver.recv())
+            .await
+            .expect("timeout waiting for canary trigger")
+            .expect("event stream closed");
+
+        assert_eq!(event.event_type, SecurityEventType::CanaryAccess);
+        assert_eq!(event.session_id.as_deref(), Some("session-test"));
+        assert_eq!(manager.triggered_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn same_size_overwrite_detected_via_mtime() {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let mut manager = CanaryManager::with_event_sender(sender);
+
+        let traps = manager
+            .arm_canaries_for_session(temp_dir.path(), Some("session-mtime".to_string()))
+            .await
+            .unwrap();
+
+        let env_decoy = traps.iter().find(|t| t.trap_type == "env_secrets").unwrap();
+        let orig_content = tokio::fs::read_to_string(&env_decoy.file_path)
+            .await
+            .unwrap();
+        let mut altered_chars: Vec<char> = orig_content.chars().collect();
+        // Change one character to keep identical length
+        if let Some(first) = altered_chars.first_mut() {
+            *first = if *first == 'X' { 'Y' } else { 'X' };
+        }
+        let altered: String = altered_chars.into_iter().collect();
+        assert_eq!(altered.len(), orig_content.len());
+
+        // Sleep briefly to ensure mtime timestamp tick differs
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::fs::write(&env_decoy.file_path, altered)
+            .await
+            .unwrap();
+
+        let event = tokio::time::timeout(Duration::from_secs(3), receiver.recv())
+            .await
+            .expect("timeout waiting for same-size overwrite trigger")
+            .expect("event stream closed");
+
+        assert_eq!(event.event_type, SecurityEventType::CanaryAccess);
+        assert_eq!(event.session_id.as_deref(), Some("session-mtime"));
     }
 }

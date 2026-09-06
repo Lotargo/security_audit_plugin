@@ -173,29 +173,37 @@ impl DeceptionFabric {
         restrict_staging_root(&self.base_root)?;
         make_session_directory_writable(&root)?;
 
-        let services: Vec<DeceptionService> = path
-            .nodes
-            .values()
-            .map(|node| DeceptionService {
+        for node in path.nodes.values() {
+            let service = DeceptionService {
                 name: node.service_name.clone(),
                 hostname: node.hostname.clone(),
                 bind_host: "127.0.0.1".to_string(),
                 port: node.port,
                 protocol: node.protocol.clone(),
-            })
-            .collect();
-        for service in &services {
-            validate_service(service)?;
+            };
+            validate_service(&service)?;
         }
 
-        materialize_profile(&root, profile, &services)?;
+        let visible_services: Vec<DeceptionService> = path
+            .visible_nodes()
+            .into_iter()
+            .map(|node| DeceptionService {
+                name: node.service_name,
+                hostname: node.hostname,
+                bind_host: "127.0.0.1".to_string(),
+                port: node.port,
+                protocol: node.protocol,
+            })
+            .collect();
+
+        materialize_profile(&root, profile, &visible_services)?;
         sync_path_projection(&root, path)?;
         let instance = DeceptionInstance {
             instance_id: format!("decoy-{session_id}-{}", now_ms()),
             session_id: session_id.to_string(),
             profile,
             root,
-            planned_services: services,
+            planned_services: visible_services,
             created_at_ms: now_ms(),
             validated: true,
         };
@@ -205,15 +213,26 @@ impl DeceptionFabric {
     }
 
     pub fn sync_attack_path(
-        &self,
+        &mut self,
         session_id: &str,
         path: &ShadowAttackPath,
     ) -> Result<(), DeceptionError> {
         let instance = self
             .instances
-            .get(session_id)
+            .get_mut(session_id)
             .ok_or_else(|| DeceptionError::MissingBehaviorTrace(session_id.to_string()))?;
         sync_path_projection(&instance.root, path)?;
+        instance.planned_services = path
+            .visible_nodes()
+            .into_iter()
+            .map(|node| DeceptionService {
+                name: node.service_name,
+                hostname: node.hostname,
+                bind_host: "127.0.0.1".to_string(),
+                port: node.port,
+                protocol: node.protocol,
+            })
+            .collect();
         Ok(())
     }
 
@@ -435,6 +454,28 @@ fn sync_path_projection(root: &Path, path: &ShadowAttackPath) -> Result<(), Dece
         .map(|node| node.hostname.clone())
         .unwrap_or_else(|| path.narrative.hostname.clone());
     write_file(root, "ops/current-node", &format!("{}\n", active))?;
+
+    // Update manifest.json with ONLY visible services to prevent hidden topology leakage
+    let manifest_services: Vec<_> = visible_nodes
+        .iter()
+        .map(|node| {
+            serde_json::json!({
+                "name": node.service_name,
+                "host": node.hostname,
+                "port": node.port,
+                "protocol": node.protocol,
+            })
+        })
+        .collect();
+    let manifest = serde_json::json!({
+        "environment": "production",
+        "region": "eu-central-1",
+        "services": manifest_services,
+    });
+    let manifest_path = root.join("manifest.json");
+    fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+    make_session_file_writable(&manifest_path)?;
+
     Ok(())
 }
 

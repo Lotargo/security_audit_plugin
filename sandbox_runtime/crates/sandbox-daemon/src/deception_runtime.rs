@@ -47,6 +47,53 @@ pub struct DeceptionRuntime {
     sessions: HashMap<String, Vec<RunningService>>,
 }
 
+use std::path::Path;
+
+fn spawn_deception_service(
+    root: &Path,
+    service: &DeceptionService,
+    uid: u32,
+    gid: u32,
+) -> Result<RunningService, DeceptionRuntimeError> {
+    let mut command = deception_sandbox::command(root, true)
+        .map_err(|error| DeceptionRuntimeError::SpawnFailed(service.name.clone(), error))?;
+    command
+        .arg("--")
+        .arg("/usr/bin/setpriv")
+        .arg(format!("--reuid={uid}"))
+        .arg(format!("--regid={gid}"))
+        .arg("--clear-groups")
+        .arg("--bounding-set=-all")
+        .arg("--inh-caps=-all")
+        .arg("--ambient-caps=-all")
+        .arg("--no-new-privs")
+        .arg("--")
+        .arg(SERVICE_BINARY)
+        .arg("--bind")
+        .arg(&service.bind_host)
+        .arg("--port")
+        .arg(service.port.to_string())
+        .arg("--protocol")
+        .arg(&service.protocol)
+        .arg("--service")
+        .arg(&service.name)
+        .arg("--hostname")
+        .arg(&service.hostname)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+
+    let child = command
+        .spawn()
+        .map_err(|error| DeceptionRuntimeError::SpawnFailed(service.name.clone(), error))?;
+
+    Ok(RunningService {
+        descriptor: service.clone(),
+        child,
+    })
+}
+
 impl Default for DeceptionRuntime {
     fn default() -> Self {
         Self::new()
@@ -77,39 +124,8 @@ impl DeceptionRuntime {
         let mut started = Vec::new();
 
         for service in &instance.planned_services {
-            let mut command = deception_sandbox::command(&instance.root, true)
-                .map_err(|error| DeceptionRuntimeError::SpawnFailed(service.name.clone(), error))?;
-            command
-                .arg("--")
-                .arg("/usr/bin/setpriv")
-                .arg(format!("--reuid={uid}"))
-                .arg(format!("--regid={gid}"))
-                .arg("--clear-groups")
-                .arg("--no-new-privs")
-                .arg("--")
-                .arg(SERVICE_BINARY)
-                .arg("--bind")
-                .arg(&service.bind_host)
-                .arg("--port")
-                .arg(service.port.to_string())
-                .arg("--protocol")
-                .arg(&service.protocol)
-                .arg("--service")
-                .arg(&service.name)
-                .arg("--hostname")
-                .arg(&service.hostname)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .kill_on_drop(true);
-
-            let child = command
-                .spawn()
-                .map_err(|error| DeceptionRuntimeError::SpawnFailed(service.name.clone(), error))?;
-            started.push(RunningService {
-                descriptor: service.clone(),
-                child,
-            });
+            let running = spawn_deception_service(&instance.root, service, uid, gid)?;
+            started.push(running);
         }
 
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
@@ -135,6 +151,60 @@ impl DeceptionRuntime {
         Ok(self
             .status(&instance.session_id)
             .expect("session was inserted after successful startup"))
+    }
+
+    pub async fn reconcile_instance(
+        &mut self,
+        instance: &DeceptionInstance,
+    ) -> Result<DeceptionRuntimeStatus, DeceptionRuntimeError> {
+        if !instance.validated {
+            return Err(DeceptionRuntimeError::UnvalidatedInstance);
+        }
+
+        let (uid, gid) = deception_exec_identity();
+        let running_services = self
+            .sessions
+            .entry(instance.session_id.clone())
+            .or_default();
+
+        let mut newly_started = Vec::new();
+        for service in &instance.planned_services {
+            let already_running = running_services
+                .iter()
+                .any(|s| s.descriptor.name == service.name || s.descriptor.port == service.port);
+
+            if !already_running {
+                let running = spawn_deception_service(&instance.root, service, uid, gid)?;
+                newly_started.push(running);
+            }
+        }
+
+        if !newly_started.is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+            let failed_service = newly_started.iter_mut().find_map(|running| {
+                if running.child.try_wait().ok().flatten().is_some() {
+                    Some(running.descriptor.name.clone())
+                } else {
+                    None
+                }
+            });
+
+            if let Some(service_name) = failed_service {
+                for running in &mut newly_started {
+                    if running.child.try_wait().ok().flatten().is_none() {
+                        let _ = running.child.kill().await;
+                    }
+                    let _ = running.child.wait().await;
+                }
+                return Err(DeceptionRuntimeError::EarlyExit(service_name));
+            }
+
+            running_services.extend(newly_started);
+        }
+
+        Ok(self
+            .status(&instance.session_id)
+            .expect("session exists in runtime"))
     }
 
     pub fn status(&self, session_id: &str) -> Option<DeceptionRuntimeStatus> {

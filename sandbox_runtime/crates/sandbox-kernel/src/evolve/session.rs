@@ -22,6 +22,7 @@ pub struct EvolveSession {
     pub active_deception_profile: Option<String>,
     pub shadow_path_id: Option<String>,
     pub attack_trace_id: Option<String>,
+    pub real_surface_revoked: bool,
 }
 
 impl EvolveSession {
@@ -38,6 +39,7 @@ impl EvolveSession {
             active_deception_profile: None,
             shadow_path_id: None,
             attack_trace_id: None,
+            real_surface_revoked: false,
         }
     }
 

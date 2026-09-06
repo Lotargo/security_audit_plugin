@@ -15,6 +15,19 @@ pub fn resolve_agent_surface(
 ) -> Result<AgentSurface, AgentSurfaceUnavailable> {
     let session_state = session_id.and_then(|id| manager.session_state(id));
 
+    // REAL XOR SHADOW: Once REAL has been revoked for a session during deception
+    // engagement, REAL must NEVER become visible to that session again, even if
+    // subsequent deception startup fails and the system drops to ISOLATE.
+    if manager.is_real_surface_revoked(session_id) {
+        return match manager.state() {
+            EvolveState::Deceive => match session_state {
+                Some(EvolveState::Deceive) => Ok(AgentSurface::Deception),
+                _ => Err(AgentSurfaceUnavailable),
+            },
+            _ => Err(AgentSurfaceUnavailable),
+        };
+    }
+
     match manager.state() {
         EvolveState::Observe | EvolveState::Suspect => match session_state {
             Some(EvolveState::Deceive) => Ok(AgentSurface::Deception),
@@ -86,5 +99,43 @@ mod tests {
         );
         assert!(resolve_agent_surface(&manager, None).is_err());
         assert!(resolve_agent_surface(&manager, Some("wrong-session")).is_err());
+    }
+
+    #[test]
+    fn failed_deception_engagement_dropping_to_isolate_denies_real_surface() {
+        let mut manager = EvolveManager::new();
+        manager.set_enabled(true);
+        let event = SecurityEvent::new(EventSource::Canary, SecurityEventType::CanaryAccess)
+            .with_session_id("session-a")
+            .with_risk_hint(RiskLevel::High);
+        manager.ingest_event(event);
+        manager.begin_deception_engagement("session-a").unwrap();
+
+        // Simulate bwrap / runtime failure: mark_isolated() is called
+        manager.mark_isolated();
+        assert_eq!(manager.state(), EvolveState::Isolate);
+
+        // Invariant check: REAL must NOT be returned!
+        assert!(resolve_agent_surface(&manager, Some("session-a")).is_err());
+        assert!(resolve_agent_surface(&manager, None).is_err());
+    }
+
+    #[test]
+    fn manual_isolation_without_deception_engagement_allows_real_forensics() {
+        let mut manager = EvolveManager::new();
+        manager.set_enabled(true);
+
+        // Manual kill switch or emergency isolation without deception engagement
+        manager.mark_isolated();
+        assert_eq!(manager.state(), EvolveState::Isolate);
+
+        assert_eq!(
+            resolve_agent_surface(&manager, None),
+            Ok(AgentSurface::Real)
+        );
+        assert_eq!(
+            resolve_agent_surface(&manager, Some("session-forensics")),
+            Ok(AgentSurface::Real)
+        );
     }
 }

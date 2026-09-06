@@ -143,6 +143,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match decision {
                 EvolveDecision::Observe => {
                     info!(event_id = %event_id, "Evolve recorded low-risk security event");
+                    let instance = {
+                        let manager = evolve_event_manager.lock().await;
+                        if manager.session_state(&session_id)
+                            == Some(sandbox_kernel::EvolveState::Deceive)
+                        {
+                            manager.deception_instance(&session_id)
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(instance) = instance {
+                        let mut runtime = evolve_event_deception_runtime.lock().await;
+                        if let Err(error) = runtime.reconcile_instance(&instance).await {
+                            warn!(
+                                event_id = %event_id,
+                                error = %error,
+                                "Failed to reconcile active deception services for newly exposed nodes"
+                            );
+                        }
+                    }
                 }
                 EvolveDecision::EnhancedTelemetry => {
                     warn!(
@@ -150,6 +170,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         resource = ?resource,
                         "Evolve entered suspicious observation state"
                     );
+                    let instance = {
+                        let manager = evolve_event_manager.lock().await;
+                        if manager.session_state(&session_id)
+                            == Some(sandbox_kernel::EvolveState::Deceive)
+                        {
+                            manager.deception_instance(&session_id)
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(instance) = instance {
+                        let mut runtime = evolve_event_deception_runtime.lock().await;
+                        if let Err(error) = runtime.reconcile_instance(&instance).await {
+                            warn!(
+                                event_id = %event_id,
+                                error = %error,
+                                "Failed to reconcile active deception services for newly exposed nodes"
+                            );
+                        }
+                    }
                 }
                 EvolveDecision::EngageDeception => {
                     {
