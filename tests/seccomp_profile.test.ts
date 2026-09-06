@@ -28,7 +28,18 @@ describe('Evolve bubblewrap seccomp profile', () => {
     expect(pivotRules[0].includes?.caps).toContain('CAP_SYS_ADMIN');
 
     expect(pivotRules[0].names).toEqual(
-      expect.arrayContaining(['mount', 'unshare', 'pivot_root'])
+      expect.arrayContaining(['clone', 'mount', 'pivot_root', 'sethostname', 'umount2'])
     );
+
+    for (const forbidden of [
+      'bpf',
+      'fanotify_init',
+      'lookup_dcookie',
+      'perf_event_open',
+      'quotactl',
+      'syslog',
+    ]) {
+      expect(pivotRules[0].names).not.toContain(forbidden);
+    }
   });
 });
