@@ -77,23 +77,32 @@ export async function runAudit() {
     '--disable-dev-shm-usage',
     '--disable-accelerated-2d-canvas',
     '--disable-gpu',
+    '--enable-logging=stderr',
+    '--v=1',
+    '--disable-crash-reporter',
+    '--disable-crashpad',
+    '--crash-dumps-dir=/tmp',
+    '--no-crash-upload',
     '--disable-webrtc',
     '--disable-features=WebRtcHideLocalIpsWithMdns',
     '--enforce-webrtc-ip-permission-check',
   ];
 
-  const browserOptions = { headless: true, args: launchArgs };
+  const chromiumExecutable =
+    process.env.CHROMIUM_PATH ||
+    (await fs
+      .stat('/usr/lib/chromium/chromium')
+      .then(() => '/usr/lib/chromium/chromium')
+      .catch(() => '/usr/bin/chromium'));
+
+  const browserOptions = {
+    headless: true,
+    args: launchArgs,
+    executablePath: chromiumExecutable,
+  };
   if (proxyUrl) browserOptions.proxy = { server: proxyUrl };
 
-  let browser;
-  try {
-    browser = await chromium.launch(browserOptions);
-  } catch {
-    browser = await chromium.launch({
-      ...browserOptions,
-      executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
-    });
-  }
+  const browser = await chromium.launch(browserOptions);
 
   const mergedHeaders = {
     ...(config.spoof_headers || {}),

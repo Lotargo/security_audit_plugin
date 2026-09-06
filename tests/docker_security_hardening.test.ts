@@ -52,7 +52,9 @@ describeDocker('final Docker security hardening regressions', () => {
         { encoding: 'utf8' }
       ).trim()
     ) as string[];
-    expect(capAdd).toEqual(expect.arrayContaining(['NET_ADMIN', 'SYS_ADMIN']));
+    expect(capAdd.map((c) => c.replace(/^CAP_/, ''))).toEqual(
+      expect.arrayContaining(['NET_ADMIN', 'SYS_ADMIN'])
+    );
 
     const status = await bridge.exec(
       "grep -E '^(CapEff|CapAmb|NoNewPrivs):' /proc/self/status"
@@ -181,5 +183,38 @@ describeDocker('final Docker security hardening regressions', () => {
         allowed_hosts: [],
       })
     ).rejects.toThrow(/explicit RoE host allowlist/i);
+  });
+
+  it('executes hardened headless stealth browser audit inside container', async () => {
+    await bridge.setScope({
+      mode: 'remote',
+      targets: ['localhost'],
+      denied_cidrs: [],
+      arm_canaries: false,
+    });
+
+    const audit = await bridge.browserAudit({
+      url: `http://localhost:${localServerPort}/`,
+      bypass_turnstile: false,
+      allow_private: true,
+    });
+    expect(audit.target_url).toBe(`http://localhost:${localServerPort}/`);
+    expect(audit.security_headers).toBeDefined();
+    expect(audit.html_snapshot_chars).toBeGreaterThan(0);
+  });
+
+  it('executes unprivileged Kali security tools without elevated capabilities', async () => {
+    const tools = [
+      'nmap --version',
+      'sqlmap --version',
+      'yara --version',
+      'subfinder -version',
+      'nikto -Version',
+    ];
+    for (const cmd of tools) {
+      const res = await bridge.exec(cmd);
+      expect(res.exit_code).toBe(0);
+      expect(res.stdout || res.stderr).toBeTruthy();
+    }
   });
 });

@@ -201,9 +201,13 @@ pub async fn handle_browser_audit(
         .kill_on_drop(true)
         .env_clear()
         .env("HOME", "/tmp")
+        .env("XDG_CONFIG_HOME", "/tmp")
+        .env("XDG_CACHE_HOME", "/tmp")
+        .env("USER", "audit-browser")
+        .env("LOGNAME", "audit-browser")
         .env("PATH", SAFE_CHILD_PATH)
         .env("LANG", "C.UTF-8")
-        .env("CHROMIUM_PATH", "/usr/bin/chromium")
+        .env("CHROMIUM_PATH", "/usr/lib/chromium/chromium")
         .env("NODE_PATH", "/opt/stealth/node_modules");
 
     let mut child = command.spawn().map_err(|e| {

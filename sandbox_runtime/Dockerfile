@@ -24,7 +24,7 @@ LABEL description="Hardened Docker Sandbox with Rust Kernel, Node.js Stealth Bro
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PORT=9999
-ENV CHROMIUM_PATH=/usr/bin/chromium
+ENV CHROMIUM_PATH=/usr/lib/chromium/chromium
 ENV NODE_PATH=/opt/stealth/node_modules
 
 # Keep the explicit package list limited to top-level capabilities. Chromium's required

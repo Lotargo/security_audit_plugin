@@ -81,6 +81,15 @@ fn planned_rules(
             "meta".into(),
             "skuid".into(),
             DECEPTION_EXEC_UID.to_string(),
+            "ct".into(),
+            "state".into(),
+            "established,related".into(),
+            "accept".into(),
+        ],
+        vec![
+            "meta".into(),
+            "skuid".into(),
+            DECEPTION_EXEC_UID.to_string(),
             "ip".into(),
             "daddr".into(),
             "127.0.0.0/8".into(),
@@ -93,11 +102,35 @@ fn planned_rules(
             "meta".into(),
             "skuid".into(),
             DECEPTION_EXEC_UID.to_string(),
+            "ip".into(),
+            "saddr".into(),
+            "127.0.0.0/8".into(),
+            "tcp".into(),
+            "sport".into(),
+            "18000-18999".into(),
+            "accept".into(),
+        ],
+        vec![
+            "meta".into(),
+            "skuid".into(),
+            DECEPTION_EXEC_UID.to_string(),
             "ip6".into(),
             "daddr".into(),
             "::1/128".into(),
             "tcp".into(),
             "dport".into(),
+            "18000-18999".into(),
+            "accept".into(),
+        ],
+        vec![
+            "meta".into(),
+            "skuid".into(),
+            DECEPTION_EXEC_UID.to_string(),
+            "ip6".into(),
+            "saddr".into(),
+            "::1/128".into(),
+            "tcp".into(),
+            "sport".into(),
             "18000-18999".into(),
             "accept".into(),
         ],
@@ -277,6 +310,53 @@ pub fn apply_runtime_containment_with_agent_allowlist(
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn has_active_processes_for_uid(target_uid: u32) -> bool {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+
+    for entry in entries.flatten() {
+        let Ok(file_name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if !file_name.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+
+        let status_path = entry.path().join("status");
+        let Ok(status_content) = std::fs::read_to_string(&status_path) else {
+            continue;
+        };
+
+        let mut is_target_uid = false;
+        let mut is_zombie = false;
+
+        for line in status_content.lines() {
+            if let Some(rest) = line.strip_prefix("State:") {
+                if rest.trim_start().starts_with('Z') {
+                    is_zombie = true;
+                }
+            } else if let Some(rest) = line.strip_prefix("Uid:") {
+                let parts: Vec<&str> = rest.split_whitespace().collect();
+                if let Some(effective_uid_str) = parts.get(1) {
+                    if let Ok(uid) = effective_uid_str.parse::<u32>() {
+                        if uid == target_uid {
+                            is_target_uid = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if is_target_uid && !is_zombie {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Terminates all existing agent-controlled processes before a session is moved to deception.
 pub fn terminate_audit_processes() -> Result<(), ContainmentError> {
     #[cfg(target_os = "linux")]
@@ -291,6 +371,8 @@ pub fn terminate_audit_processes() -> Result<(), ContainmentError> {
         let uid = audit_uid.to_string();
         let kill = Command::new("pkill")
             .args(["-KILL", "-u", uid.as_str()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .status()?;
         if !kill.success() && kill.code() != Some(1) {
             return Err(ContainmentError::ProcessTerminationFailed(format!(
@@ -298,18 +380,22 @@ pub fn terminate_audit_processes() -> Result<(), ContainmentError> {
             )));
         }
 
-        std::thread::sleep(std::time::Duration::from_millis(25));
-
-        let verify = Command::new("pgrep").args(["-u", uid.as_str()]).status()?;
-        match verify.code() {
-            Some(1) => Ok(()),
-            Some(0) => Err(ContainmentError::ProcessTerminationFailed(
-                "audit UID still owns running processes after SIGKILL".to_string(),
-            )),
-            _ => Err(ContainmentError::ProcessTerminationFailed(format!(
-                "pgrep exited with status {verify}"
-            ))),
+        let mut terminated = false;
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            if !has_active_processes_for_uid(audit_uid) {
+                terminated = true;
+                break;
+            }
         }
+
+        if !terminated {
+            return Err(ContainmentError::ProcessTerminationFailed(
+                "audit UID still owns running processes after SIGKILL".to_string(),
+            ));
+        }
+
+        Ok(())
     }
 
     #[cfg(not(target_os = "linux"))]

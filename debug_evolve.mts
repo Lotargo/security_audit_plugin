@@ -1,6 +1,10 @@
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { SandboxBridge } from './src/mcp/bridge.js';
 
-const b = new SandboxBridge({ workspaceRoot: process.cwd(), hostPort: 19301 });
+const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'security-audit-evolve-debug-'));
+const b = new SandboxBridge({ workspaceRoot: workspace, hostPort: 19301 });
 await b.ensureRuntime();
 console.log('RUNTIME OK');
 await b.setScope({ mode: 'local', arm_canaries: false });
@@ -26,6 +30,16 @@ console.log('TRACE risk:', trace.risk_level, trace.risk_score, JSON.stringify(tr
 try {
   const prep: any = await b.prepareDeception(active.session_id);
   console.log('PREPARE OK:', JSON.stringify(prep, null, 1).slice(0, 2000));
+  const service = prep.runtime.services[0];
+  const synthetic = await b.execDeception(
+    `curl -v http://${service.bind_host}:${service.port}/`,
+    active.session_id
+  );
+  console.log('SYNTHETIC CURL:', JSON.stringify(synthetic));
 } catch (e: any) {
   console.log('PREPARE FAILED:', e.message);
+} finally {
+  b.getDocker().stop();
+  fs.rmSync(workspace, { recursive: true, force: true });
 }
+

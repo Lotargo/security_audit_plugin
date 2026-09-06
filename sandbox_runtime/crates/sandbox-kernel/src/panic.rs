@@ -62,8 +62,11 @@ table inet filter {{
         meta skuid {DECEPTION_EXEC_UID} tcp dport 9051 reject
         meta skuid {DECEPTION_EXEC_UID} udp dport 53 reject
         meta skuid {DECEPTION_EXEC_UID} tcp dport 53 reject
+        meta skuid {DECEPTION_EXEC_UID} ct state established,related accept
         meta skuid {DECEPTION_EXEC_UID} ip daddr 127.0.0.0/8 tcp dport 18000-18999 accept
+        meta skuid {DECEPTION_EXEC_UID} ip saddr 127.0.0.0/8 tcp sport 18000-18999 accept
         meta skuid {DECEPTION_EXEC_UID} ip6 daddr ::1/128 tcp dport 18000-18999 accept
+        meta skuid {DECEPTION_EXEC_UID} ip6 saddr ::1/128 tcp sport 18000-18999 accept
         meta skuid {DECEPTION_EXEC_UID} reject
         oifname "lo" accept
         tcp sport {mgmt_port} accept

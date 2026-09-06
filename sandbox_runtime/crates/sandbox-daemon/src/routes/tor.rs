@@ -61,68 +61,82 @@ pub async fn handle_rotate_tor(
         )
     })?;
 
-    let mut stream = TcpStream::connect("127.0.0.1:9051").await.map_err(|e| {
-        warn!("Tor ControlPort is not reachable: {}", e);
-        (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error": format!("Tor ControlPort unavailable: {}", e)})),
-        )
-    })?;
-
-    let auth_command = format!("AUTHENTICATE {cookie}\r\n");
-    stream
-        .write_all(auth_command.as_bytes())
-        .await
-        .map_err(|e| {
+    let communicate = async {
+        let mut stream = TcpStream::connect("127.0.0.1:9051").await.map_err(|e| {
+            warn!("Tor ControlPort is not reachable: {}", e);
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("Tor ControlPort write failed: {}", e)})),
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": format!("Tor ControlPort unavailable: {}", e)})),
             )
         })?;
 
-    let mut buf = [0u8; 1024];
-    let n = stream.read(&mut buf).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Tor ControlPort read failed: {}", e)})),
-        )
-    })?;
-    let auth_resp = String::from_utf8_lossy(&buf[..n]);
-    if !auth_resp.starts_with("250") {
-        return Err((
-            StatusCode::BAD_GATEWAY,
-            Json(
-                json!({"error": format!("Tor cookie authentication rejected: {}", auth_resp.trim())}),
-            ),
-        ));
-    }
+        let auth_command = format!("AUTHENTICATE {cookie}\r\n");
+        stream
+            .write_all(auth_command.as_bytes())
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": format!("Tor ControlPort write failed: {}", e)})),
+                )
+            })?;
 
-    stream.write_all(b"SIGNAL NEWNYM\r\n").await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to send SIGNAL NEWNYM: {}", e)})),
-        )
-    })?;
+        let mut buf = [0u8; 1024];
+        let n = stream.read(&mut buf).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Tor ControlPort read failed: {}", e)})),
+            )
+        })?;
+        let auth_resp = String::from_utf8_lossy(&buf[..n]);
+        if !auth_resp.starts_with("250") {
+            return Err((
+                StatusCode::BAD_GATEWAY,
+                Json(
+                    json!({"error": format!("Tor cookie authentication rejected: {}", auth_resp.trim())}),
+                ),
+            ));
+        }
 
-    let n = stream.read(&mut buf).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to read NEWNYM response: {}", e)})),
-        )
-    })?;
-    let sig_resp = String::from_utf8_lossy(&buf[..n]);
-    if !sig_resp.starts_with("250") {
-        return Err((
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error": format!("Tor NEWNYM signal rejected: {}", sig_resp.trim())})),
-        ));
-    }
+        stream.write_all(b"SIGNAL NEWNYM\r\n").await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Failed to send SIGNAL NEWNYM: {}", e)})),
+            )
+        })?;
+
+        let n = stream.read(&mut buf).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Failed to read NEWNYM response: {}", e)})),
+            )
+        })?;
+        let sig_resp = String::from_utf8_lossy(&buf[..n]);
+        if !sig_resp.starts_with("250") {
+            return Err((
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": format!("Tor NEWNYM signal rejected: {}", sig_resp.trim())})),
+            ));
+        }
+
+        Ok(sig_resp.trim().to_string())
+    };
+
+    let sig_resp = tokio::time::timeout(std::time::Duration::from_secs(5), communicate)
+        .await
+        .map_err(|_| {
+            warn!("Tor ControlPort operation timed out after 5 seconds");
+            (
+                StatusCode::GATEWAY_TIMEOUT,
+                Json(json!({"error": "Tor ControlPort communication timed out"})),
+            )
+        })??;
 
     info!("Successfully sent authenticated SIGNAL NEWNYM to Tor ControlPort.");
     Ok(Json(json!({
         "status": "success",
         "message": "Tor circuit rotated successfully (SIGNAL NEWNYM applied)",
-        "control_response": sig_resp.trim()
+        "control_response": sig_resp
     })))
 }
 

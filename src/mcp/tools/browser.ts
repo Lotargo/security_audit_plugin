@@ -30,6 +30,11 @@ export const BrowserAuditSchema = z.object({
     .record(z.string())
     .optional()
     .describe('Additional HTTP headers to send from the browser context'),
+  allow_private: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe('Allow audit of RFC1918 / loopback endpoints when explicitly in scope'),
 });
 
 export function registerBrowserTool(server: any, bridge: SandboxBridge) {

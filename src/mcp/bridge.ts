@@ -38,6 +38,7 @@ export interface BrowserAuditOptions {
   bypass_turnstile?: boolean;
   generate_decoy_noise?: boolean;
   spoof_headers?: Record<string, string>;
+  allow_private?: boolean;
 }
 
 export interface ExecResult {

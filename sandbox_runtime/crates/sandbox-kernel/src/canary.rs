@@ -179,6 +179,25 @@ users:
         self.is_armed.store(true, Ordering::SeqCst);
         let generation = self.watch_generation.fetch_add(1, Ordering::SeqCst) + 1;
 
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for trap in &planted {
+                if let Some(parent) = trap.file_path.parent() {
+                    if parent != base_dir {
+                        let _ = std::fs::set_permissions(
+                            parent,
+                            std::fs::Permissions::from_mode(0o777),
+                        );
+                    }
+                }
+                let _ = std::fs::set_permissions(
+                    &trap.file_path,
+                    std::fs::Permissions::from_mode(0o666),
+                );
+            }
+        }
+
         // Capture baseline metadata synchronously BEFORE returning from arm.
         // This eliminates the race condition where callers modify the canary immediately
         // after arming, causing an async watcher to capture the modified file as baseline.

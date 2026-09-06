@@ -26,7 +26,22 @@ pub fn command(
         .arg("prod-app-01")
         .arg("--ro-bind")
         .arg("/usr")
-        .arg("/usr")
+        .arg("/usr");
+
+    for (target, link) in [
+        ("/usr/lib", "/lib"),
+        ("/usr/lib64", "/lib64"),
+        ("/usr/lib32", "/lib32"),
+        ("/usr/bin", "/bin"),
+        ("/usr/sbin", "/sbin"),
+    ] {
+        if Path::new(target).exists() {
+            let rel_target = target.trim_start_matches('/');
+            process.arg("--symlink").arg(rel_target).arg(link);
+        }
+    }
+
+    process
         // /usr/local contains the trusted sandbox daemon. Never project it into a deceptive shell.
         .arg("--tmpfs")
         .arg("/usr/local")
