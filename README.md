@@ -40,6 +40,9 @@ The plugin does **not** read, copy, proxy, or store model-provider credentials f
 - `remote` and `hybrid` direct targets are resolved on the trusted host and pinned to explicit `/32` or `/128` nftables entries.
 - Explicit CIDR allowlists are validated; malformed and unbounded `/0` entries are rejected.
 - Denied private, loopback, link-local, and metadata ranges take precedence over allow rules.
+- Container root has only the infrastructure capabilities required by the runtime: `NET_ADMIN` for containment and `SYS_ADMIN` for the trusted bubblewrap mount-namespace constructor used by Evolve.
+- A shipped seccomp allowlist remains `SCMP_ACT_ERRNO` by default and adds only `pivot_root` to Docker's existing `CAP_SYS_ADMIN`-gated namespace rule; the runtime never uses `seccomp=unconfined`.
+- Agent-controlled commands, tmux panes, browser workers, and synthetic payloads drop their capability bounding/inheritable/ambient sets before execution and run with `no_new_privs`.
 - Agent-controlled commands run under an unprivileged UID and cannot modify nftables.
 - Emergency isolation drops the network policy and flushes existing connection state.
 - Once emergency isolation is latched, egress cannot be provisioned again in the same runtime; a clean sandbox recreate is required.

@@ -23,6 +23,7 @@
     "sandbox_runtime/crates",
     "sandbox_runtime/stealth",
     "sandbox_runtime/tor",
+    "sandbox_runtime/seccomp",
     "gemini-extension.json",
     ".claude-plugin",
     ".opencode",
