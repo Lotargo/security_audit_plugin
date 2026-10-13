@@ -12,7 +12,41 @@ export function normalizeHost(host) {
 
 export function normalizeAllowedHosts(value) {
   if (!Array.isArray(value)) return [];
-  return [...new Set(value.map(normalizeHost).filter(Boolean))].sort();
+  return [...new Set(value.map((v) => String(v || '').trim().toLowerCase()).filter(Boolean))].sort();
+}
+
+function parseAllowedAuthority(entry) {
+  const v = String(entry || '').trim().toLowerCase();
+  const bracketed = v.match(/^\[([^\]]+)\]:(\d+)$/);
+  if (bracketed) return { host: bracketed[1], port: bracketed[2] };
+  if (v.startsWith('[') && v.endsWith(']')) return { host: v.slice(1, -1), port: null };
+  const colonCount = (v.match(/:/g) || []).length;
+  if (colonCount > 1) return { host: v, port: null };
+  const idx = v.lastIndexOf(':');
+  if (idx !== -1 && /^\d+$/.test(v.slice(idx + 1))) {
+    const h = v.slice(0, idx);
+    const host = h.startsWith('[') && h.endsWith(']') ? h.slice(1, -1) : h;
+    return { host, port: v.slice(idx + 1) };
+  }
+  const host = v.startsWith('[') && v.endsWith(']') ? v.slice(1, -1) : v;
+  return { host, port: null };
+}
+
+function effectivePort(protocol, explicitPort) {
+  if (explicitPort) return explicitPort;
+  if (protocol === 'http:') return '80';
+  if (protocol === 'https:') return '443';
+  return '';
+}
+
+function isAuthorityInScope(hostname, port, allowedHosts) {
+  for (const allowed of allowedHosts) {
+    const { host, port: allowedPort } = parseAllowedAuthority(allowed);
+    if (host !== hostname) continue;
+    if (allowedPort === null) return true;
+    if (port && allowedPort === port) return true;
+  }
+  return false;
 }
 
 export function isPrivateOrRestrictedIp(ipStr) {
@@ -56,9 +90,11 @@ export async function classifyUrl(
     if (!host) {
       return { ok: false, reason: 'Missing or empty hostname in URL' };
     }
+    const port = effectivePort(parsed.protocol, parsed.port);
 
-    if (allowedHosts.length > 0 && !allowedHosts.includes(host)) {
-      return { ok: false, reason: `Host is outside active RoE scope: ${host}` };
+    // ROADMAP п.5: explicit host:port scope does not expand to bare host.
+    if (allowedHosts.length > 0 && !isAuthorityInScope(host, port, allowedHosts)) {
+      return { ok: false, reason: `Host is outside active RoE scope: ${host}${port ? ':' + port : ''}` };
     }
 
     if (allowPrivate) return { ok: true, reason: 'allow_private' };

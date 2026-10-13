@@ -48,7 +48,17 @@ pub fn resolve_agent_surface(
         // commands must keep working so callers can verify fail-closed egress
         // (curl exits non-zero) via normal exec; the nftables kill-switch already
         // blocks the actual network path.
-        EvolveState::Isolate => Ok(AgentSurface::Real),
+        //
+        // ROADMAP п.4: global fail-closed latch. If ANY session has ever had REAL
+        // revoked (deception engagement started), ISOLATE must deny REAL for ALL
+        // sessions, including unknown/other session IDs. Only pure manual isolation
+        // without any engagement keeps forensics Real.
+        EvolveState::Isolate => {
+            if manager.is_real_surface_revoked(None) {
+                return Err(AgentSurfaceUnavailable);
+            }
+            Ok(AgentSurface::Real)
+        }
     }
 }
 
@@ -118,6 +128,22 @@ mod tests {
         // Invariant check: REAL must NOT be returned!
         assert!(resolve_agent_surface(&manager, Some("session-a")).is_err());
         assert!(resolve_agent_surface(&manager, None).is_err());
+    }
+
+    #[test]
+    fn failed_engagement_denies_other_and_unknown_sessions_in_isolate() {
+        let mut manager = EvolveManager::new();
+        manager.set_enabled(true);
+        let event = SecurityEvent::new(EventSource::Canary, SecurityEventType::CanaryAccess)
+            .with_session_id("session-a")
+            .with_risk_hint(RiskLevel::High);
+        manager.ingest_event(event);
+        manager.begin_deception_engagement("session-a").unwrap();
+        manager.mark_isolated();
+
+        // ROADMAP п.4: другой/неизвестный session ID не должен получить Real.
+        assert!(resolve_agent_surface(&manager, Some("session-b")).is_err());
+        assert!(resolve_agent_surface(&manager, Some("unknown-session-xyz")).is_err());
     }
 
     #[test]

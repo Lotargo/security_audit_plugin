@@ -325,10 +325,19 @@ fn materialize_profile(
                     service.hostname, service.port
                 ),
             )?;
+            // ROADMAP п.9: bastion hostname only if visible, else REDACTED.
+            let bastion_visible = services
+                .iter()
+                .any(|s| s.hostname == "bastion.prod.internal");
+            let bastion_host = if bastion_visible {
+                "bastion.prod.internal"
+            } else {
+                "REDACTED"
+            };
             write_file(
                 root,
                 "home/.ssh/config",
-                "Host bastion-prod\n  HostName bastion.prod.internal\n  User deploy\n",
+                &format!("Host bastion-prod\n  HostName {bastion_host}\n  User deploy\n"),
             )?;
         }
         DeceptionProfile::CiRunner => {
@@ -342,11 +351,14 @@ fn materialize_profile(
             )?;
         }
         DeceptionProfile::ApplicationServer => {
+            // ROADMAP п.9: never embed Hidden topology hostnames (db-prod/vault)
+            // into profile configs. Only the visible entry service is referenced;
+            // downstream stores stay REDACTED until their nodes become Exposed.
             write_file(
                 root,
                 "app/runtime.env",
                 &format!(
-                    "HEALTH_API=http://{}:{}\nDATABASE_HOST=db-prod.internal\nSECRETS_URL=http://vault.prod.internal\n",
+                    "HEALTH_API=http://{}:{}\nDATABASE_HOST=REDACTED\nSECRETS_URL=REDACTED\n",
                     service.hostname, service.port
                 ),
             )?;
@@ -590,5 +602,72 @@ mod tests {
             fabric.prepare("../escape", &trace),
             Err(DeceptionError::InvalidSessionId)
         ));
+    }
+
+    #[test]
+    fn materialized_configs_never_embed_hidden_topology_hosts() {
+        // ROADMAP п.9: Hidden nodes must not leak via profile configs.
+        let temp = TempDir::new().unwrap();
+        let mut fabric = DeceptionFabric::with_root(temp.path().join("deception"));
+        // Force ApplicationServer profile via generic trace (falls back to workstation?
+        // instead directly test materialize with visible-only services).
+        let visible = vec![DeceptionService {
+            name: "app-http".to_string(),
+            hostname: "app.prod.internal".to_string(),
+            bind_host: "127.0.0.1".to_string(),
+            port: 18082,
+            protocol: "http".to_string(),
+        }];
+        let root = temp.path().join("app-root");
+        std::fs::create_dir_all(&root).unwrap();
+        materialize_profile(&root, DeceptionProfile::ApplicationServer, &visible).unwrap();
+        let runtime_env =
+            std::fs::read_to_string(root.join("app/runtime.env")).expect("runtime.env exists");
+        assert!(!runtime_env.contains("db-prod.internal"), "hidden DB leaked");
+        assert!(!runtime_env.contains("vault.prod.internal"), "hidden vault leaked");
+        assert!(runtime_env.contains("app.prod.internal"));
+
+        // Full prepare path: no Hidden hostname in any materialized file.
+        let trace = trace_with_command("whoami");
+        let instance = fabric.prepare("session-hidden-check", &trace).unwrap();
+        let path = crate::evolve::ShadowAttackPath::build(
+            "session-hidden-check",
+            DeceptionProfile::select(&trace),
+        )
+        .unwrap();
+        let hidden: Vec<String> = path
+            .nodes
+            .values()
+            .filter(|n| n.state == ShadowNodeState::Hidden)
+            .map(|n| n.hostname.clone())
+            .collect();
+        let mut leaked = Vec::new();
+        for entry in walkdir_files(&instance.root) {
+            let content = std::fs::read_to_string(&entry).unwrap_or_default();
+            for h in &hidden {
+                if content.contains(h) {
+                    leaked.push(format!("{} contains hidden {}", entry.display(), h));
+                }
+            }
+        }
+        assert!(leaked.is_empty(), "topology leak: {:?}", leaked);
+        fabric.destroy("session-hidden-check").unwrap();
+    }
+
+    fn walkdir_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let entries = std::fs::read_dir(&dir).unwrap();
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.is_file() {
+                    out.push(p);
+                }
+            }
+        }
+        out
     }
 }

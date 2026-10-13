@@ -236,14 +236,14 @@ impl EvolveManager {
 
     /// Checks whether the REAL filesystem surface has been revoked for the given session.
     /// If session_id is None, returns true if ANY session has had its REAL surface revoked.
+    /// Unknown session IDs fail closed: if ANY session is revoked, unknown is treated as revoked.
     pub fn is_real_surface_revoked(&self, session_id: Option<&str>) -> bool {
-        if let Some(id) = session_id {
-            self.sessions
-                .get(id)
-                .map(|s| s.real_surface_revoked)
-                .unwrap_or(false)
-        } else {
-            self.sessions.values().any(|s| s.real_surface_revoked)
+        match session_id {
+            Some(id) => match self.sessions.get(id) {
+                Some(s) => s.real_surface_revoked,
+                None => self.sessions.values().any(|s| s.real_surface_revoked),
+            },
+            None => self.sessions.values().any(|s| s.real_surface_revoked),
         }
     }
 

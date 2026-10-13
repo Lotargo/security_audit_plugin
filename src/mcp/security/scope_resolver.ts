@@ -146,6 +146,10 @@ export function normalizeAgentNetworkTargets(targets: string[]): string[] {
  * Produce the exact L7 hostname allowlist used by managed proxy/Tor clients.
  * Broad CIDRs are intentionally rejected here: once traffic is tunneled through a proxy the
  * sandbox kernel can see only the proxy endpoint, so a network CIDR cannot be enforced reliably.
+ *
+ * ROADMAP п.5: preserves explicit ports. `localhost:18081` stays `localhost:18081`
+ * and does NOT expand to bare `localhost` (which would allow other ports on same host).
+ * Bare hostnames (no explicit port) keep legacy any-port semantics for backward compat.
  */
 export function normalizeScopeHosts(targets: string[]): string[] {
   const hosts = new Set<string>();
@@ -168,10 +172,51 @@ export function normalizeScopeHosts(targets: string[]): string[] {
       continue;
     }
 
-    hosts.add(extractTargetHostname(trimmed).toLowerCase());
+    hosts.add(extractTargetAuthority(trimmed).toLowerCase());
   }
 
   return [...hosts].sort();
+}
+
+/** Extract `host` or `host:port` authority, preserving explicit ports (ROADMAP п.5). */
+export function extractTargetAuthority(target: string): string {
+  const trimmed = target.trim();
+  if (!trimmed) throw new Error('Scope target cannot be empty');
+  try {
+    const parsed = new URL(trimmed.includes('://') ? trimmed : `http://${trimmed}`);
+    const hostname = stripIpv6Brackets(parsed.hostname);
+    if (!hostname) throw new Error('missing hostname');
+    const port = parsed.port;
+    if (!port) return hostname;
+    // Normalize IPv6 with port to bracketed form to avoid ambiguity.
+    return hostname.includes(':') ? `[${hostname}]:${port}` : `${hostname}:${port}`;
+  } catch {
+    throw new Error(`Invalid scope target: ${target}`);
+  }
+}
+
+function parseAllowedAuthority(entry: string): { host: string; port: string | null } {
+  const v = entry.trim().toLowerCase();
+  // [ipv6]:port
+  const bracketed = v.match(/^\[([^\]]+)\]:(\d+)$/);
+  if (bracketed) return { host: bracketed[1], port: bracketed[2] };
+  // Bare [ipv6]
+  if (v.startsWith('[') && v.endsWith(']')) return { host: v.slice(1, -1), port: null };
+  // Bare IPv6 without port contains >1 colon -> treat as bare host.
+  const colonCount = (v.match(/:/g) || []).length;
+  if (colonCount > 1) return { host: v, port: null };
+  const idx = v.lastIndexOf(':');
+  if (idx !== -1 && /^\d+$/.test(v.slice(idx + 1))) {
+    return { host: stripIpv6Brackets(v.slice(0, idx)), port: v.slice(idx + 1) };
+  }
+  return { host: stripIpv6Brackets(v), port: null };
+}
+
+function effectiveUrlPort(parsed: URL): string {
+  if (parsed.port) return parsed.port;
+  if (parsed.protocol === 'http:') return '80';
+  if (parsed.protocol === 'https:') return '443';
+  return '';
 }
 
 export function isUrlInScope(url: string, allowedHosts: string[]): boolean {
@@ -179,7 +224,15 @@ export function isUrlInScope(url: string, allowedHosts: string[]): boolean {
     const parsed = new URL(url);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
     const hostname = stripIpv6Brackets(parsed.hostname).toLowerCase();
-    return allowedHosts.some((allowed) => allowed.toLowerCase() === hostname);
+    const port = effectiveUrlPort(parsed);
+    for (const allowed of allowedHosts) {
+      const { host, port: allowedPort } = parseAllowedAuthority(allowed);
+      if (host !== hostname) continue;
+      // Bare host entry allows any port (legacy); explicit host:port requires exact match.
+      if (allowedPort === null) return true;
+      if (port && allowedPort === port) return true;
+    }
+    return false;
   } catch {
     return false;
   }

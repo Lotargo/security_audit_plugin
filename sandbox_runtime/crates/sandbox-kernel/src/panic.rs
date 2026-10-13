@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use thiserror::Error;
 use tracing::{error, info};
 
-use crate::privilege::DECEPTION_EXEC_UID;
+use crate::privilege::{BROWSER_EXEC_UID, DECEPTION_EXEC_UID};
 
 static IS_ISOLATED: AtomicBool = AtomicBool::new(false);
 
@@ -68,6 +68,9 @@ table inet filter {{
         meta skuid {DECEPTION_EXEC_UID} ip6 daddr ::1/128 tcp dport 18000-18999 accept
         meta skuid {DECEPTION_EXEC_UID} ip6 saddr ::1/128 tcp sport 18000-18999 accept
         meta skuid {DECEPTION_EXEC_UID} reject
+        meta skuid {BROWSER_EXEC_UID} tcp dport {mgmt_port} reject
+        meta skuid {BROWSER_EXEC_UID} tcp dport 9050 reject
+        meta skuid {BROWSER_EXEC_UID} tcp dport 9051 reject
         oifname "lo" accept
         tcp sport {mgmt_port} accept
     }}

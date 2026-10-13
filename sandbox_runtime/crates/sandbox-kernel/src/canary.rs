@@ -75,44 +75,89 @@ impl CanaryManager {
     }
 
     /// Plants canaries and associates future trigger events with a behavioral Evolve session.
+    ///
+    /// Fail-safe guarantees (ROADMAP п.2, п.3):
+    /// - never overwrites a pre-existing user file (uses `create_new`, skips if present);
+    /// - never chmods a pre-existing directory/file, only newly created canary paths.
     pub async fn arm_canaries_for_session(
         &mut self,
         base_dir: &Path,
         session_id: Option<String>,
     ) -> Result<Vec<CanaryTrap>, CanaryError> {
         let mut planted = Vec::new();
+        // Tracks (path, was_newly_created) for permission hardening.
+        let mut created_dirs: Vec<(PathBuf, bool)> = Vec::new();
+
+        // Helper: ensure dir exists, return true if we created it.
+        async fn ensure_dir(path: &Path) -> Result<bool, std::io::Error> {
+            match fs::try_exists(path).await {
+                Ok(true) => Ok(false),
+                Ok(false) => {
+                    fs::create_dir_all(path).await?;
+                    Ok(true)
+                }
+                Err(e) => Err(e),
+            }
+        }
+
+        // Helper: exclusively create file, return false if it already existed.
+        async fn write_new(path: &Path, content: &[u8]) -> Result<bool, std::io::Error> {
+            use tokio::io::AsyncWriteExt;
+            let mut opts = tokio::fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                opts.mode(0o600);
+            }
+            let mut f = match opts.open(path).await {
+                Ok(f) => f,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
+                Err(e) => return Err(e),
+            };
+            f.write_all(content).await?;
+            f.flush().await?;
+            Ok(true)
+        }
 
         // 1. AWS Credentials Honeypot
         let aws_dir = base_dir.join(".aws");
-        fs::create_dir_all(&aws_dir).await?;
+        let aws_dir_new = ensure_dir(&aws_dir).await?;
+        created_dirs.push((aws_dir.clone(), aws_dir_new));
         let aws_creds = aws_dir.join("credentials");
         let aws_content = r#"[default]
 aws_access_key_id = AKIAIOSFODNN7EXAMPLE
 aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 region = us-east-1
 "#;
-        fs::write(&aws_creds, aws_content).await?;
-        planted.push(CanaryTrap {
-            file_path: aws_creds,
-            trap_type: "aws_credentials".to_string(),
-            description: "Decoy AWS root credentials trap".to_string(),
-        });
+        if write_new(&aws_creds, aws_content.as_bytes()).await? {
+            planted.push(CanaryTrap {
+                file_path: aws_creds,
+                trap_type: "aws_credentials".to_string(),
+                description: "Decoy AWS root credentials trap".to_string(),
+            });
+        } else {
+            tracing::warn!(path = %aws_creds.display(), "canary target already exists, skipping overwrite");
+        }
 
         // 2. SSH Private Key Honeypot
         let ssh_dir = base_dir.join(".ssh");
-        fs::create_dir_all(&ssh_dir).await?;
+        let ssh_dir_new = ensure_dir(&ssh_dir).await?;
+        created_dirs.push((ssh_dir.clone(), ssh_dir_new));
         let ssh_key = ssh_dir.join("id_rsa");
         let ssh_content = r#"-----BEGIN OPENSSH PRIVATE KEY-----
 b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
 QyNTUxOQAAACDDecoyHoneytokenKeyForAttackerDetectionOnly1234567890abcdef==
 -----END OPENSSH PRIVATE KEY-----
 "#;
-        fs::write(&ssh_key, ssh_content).await?;
-        planted.push(CanaryTrap {
-            file_path: ssh_key,
-            trap_type: "ssh_private_key".to_string(),
-            description: "Decoy SSH RSA private key trap".to_string(),
-        });
+        if write_new(&ssh_key, ssh_content.as_bytes()).await? {
+            planted.push(CanaryTrap {
+                file_path: ssh_key,
+                trap_type: "ssh_private_key".to_string(),
+                description: "Decoy SSH RSA private key trap".to_string(),
+            });
+        } else {
+            tracing::warn!(path = %ssh_key.display(), "canary target already exists, skipping overwrite");
+        }
 
         // 3. Environment Decoy Honeypot
         let env_decoy = base_dir.join(".env.decoy");
@@ -120,16 +165,20 @@ QyNTUxOQAAACDDecoyHoneytokenKeyForAttackerDetectionOnly1234567890abcdef==
 JWT_SECRET="decoy-canary-secret-token-audit-trap-999"
 STRIPE_API_KEY="sk_live_51CanaryDecoyKeyDoNotUseExfiltrationTrap"
 "#;
-        fs::write(&env_decoy, env_content).await?;
-        planted.push(CanaryTrap {
-            file_path: env_decoy,
-            trap_type: "env_secrets".to_string(),
-            description: "Decoy production database and API credentials trap".to_string(),
-        });
+        if write_new(&env_decoy, env_content.as_bytes()).await? {
+            planted.push(CanaryTrap {
+                file_path: env_decoy,
+                trap_type: "env_secrets".to_string(),
+                description: "Decoy production database and API credentials trap".to_string(),
+            });
+        } else {
+            tracing::warn!(path = %env_decoy.display(), "canary target already exists, skipping overwrite");
+        }
 
         // 4. Kubernetes Config Honeypot
         let kube_dir = base_dir.join(".kube");
-        fs::create_dir_all(&kube_dir).await?;
+        let kube_dir_new = ensure_dir(&kube_dir).await?;
+        created_dirs.push((kube_dir.clone(), kube_dir_new));
         let kube_config = kube_dir.join("config");
         let kube_content = r#"apiVersion: v1
 kind: Config
@@ -149,16 +198,20 @@ users:
   user:
     token: canary-k8s-service-account-token-do-not-use-exfil
 "#;
-        fs::write(&kube_config, kube_content).await?;
-        planted.push(CanaryTrap {
-            file_path: kube_config,
-            trap_type: "kube_config".to_string(),
-            description: "Decoy Kubernetes cluster admin configuration trap".to_string(),
-        });
+        if write_new(&kube_config, kube_content.as_bytes()).await? {
+            planted.push(CanaryTrap {
+                file_path: kube_config,
+                trap_type: "kube_config".to_string(),
+                description: "Decoy Kubernetes cluster admin configuration trap".to_string(),
+            });
+        } else {
+            tracing::warn!(path = %kube_config.display(), "canary target already exists, skipping overwrite");
+        }
 
         // 5. Google Cloud Service Account Honeypot
         let gcp_dir = base_dir.join(".gcp");
-        fs::create_dir_all(&gcp_dir).await?;
+        let gcp_dir_new = ensure_dir(&gcp_dir).await?;
+        created_dirs.push((gcp_dir.clone(), gcp_dir_new));
         let gcp_creds = gcp_dir.join("credentials.json");
         let gcp_content = r#"{
   "type": "service_account",
@@ -168,12 +221,15 @@ users:
   "client_id": "123456789012345678901"
 }
 "#;
-        fs::write(&gcp_creds, gcp_content).await?;
-        planted.push(CanaryTrap {
-            file_path: gcp_creds,
-            trap_type: "gcp_credentials".to_string(),
-            description: "Decoy GCP IAM service account credential trap".to_string(),
-        });
+        if write_new(&gcp_creds, gcp_content.as_bytes()).await? {
+            planted.push(CanaryTrap {
+                file_path: gcp_creds,
+                trap_type: "gcp_credentials".to_string(),
+                description: "Decoy GCP IAM service account credential trap".to_string(),
+            });
+        } else {
+            tracing::warn!(path = %gcp_creds.display(), "canary target already exists, skipping overwrite");
+        }
 
         self.traps = planted.clone();
         self.is_armed.store(true, Ordering::SeqCst);
@@ -182,15 +238,25 @@ users:
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
+            use std::collections::HashSet;
+            let new_dirs: HashSet<&PathBuf> = created_dirs
+                .iter()
+                .filter_map(|(p, is_new)| if *is_new { Some(p) } else { None })
+                .collect();
             for trap in &planted {
                 if let Some(parent) = trap.file_path.parent() {
-                    if parent != base_dir {
+                    if parent != base_dir && new_dirs.contains(&parent.to_path_buf()) {
                         let _ = std::fs::set_permissions(
                             parent,
-                            std::fs::Permissions::from_mode(0o777),
+                            std::fs::Permissions::from_mode(0o755),
                         );
                     }
                 }
+                // Files were just created via create_new; they must stay writable by the
+                // unprivileged agent UID or the tripwire can never fire (append/touch
+                // would fail with EACCES and deception would never engage). 0666 is
+                // intentional for NEWLY planted decoys only; pre-existing user files
+                // are never planted and never chmodded (see skip above).
                 let _ = std::fs::set_permissions(
                     &trap.file_path,
                     std::fs::Permissions::from_mode(0o666),
@@ -214,10 +280,120 @@ users:
             }
         }
 
-        self.spawn_watcher(initial_meta, session_id, generation);
+        self.spawn_watcher(initial_meta, session_id.clone(), generation);
+        Self::spawn_inotify_watcher(
+            planted.clone(),
+            self.is_armed.clone(),
+            self.triggered_count.clone(),
+            self.watch_generation.clone(),
+            self.event_sender.clone(),
+            session_id,
+            generation,
+        );
 
         info!("Armed {} canary honeytoken tripwires.", planted.len());
         Ok(planted)
+    }
+
+    /// ROADMAP п.8: inotify/access sensor. `relatime/noatime` makes atime polling
+    /// best-effort only; IN_ACCESS/IN_OPEN fires on read regardless of atime.
+    /// Polling above stays as fallback (Windows/macOS, modify/mtime).
+    fn spawn_inotify_watcher(
+        traps: Vec<CanaryTrap>,
+        is_armed: Arc<AtomicBool>,
+        triggered_count: Arc<AtomicUsize>,
+        watch_generation: Arc<AtomicU64>,
+        event_sender: Option<UnboundedSender<SecurityEvent>>,
+        session_id: Option<String>,
+        generation: u64,
+    ) {
+        use std::collections::{HashMap, HashSet};
+        use std::time::Duration as StdDuration;
+
+        // Map parent dir -> list of (file path, trap_type).
+        let mut by_parent: HashMap<PathBuf, Vec<(PathBuf, String)>> = HashMap::new();
+        for t in &traps {
+            if let Some(parent) = t.file_path.parent() {
+                by_parent
+                    .entry(parent.to_path_buf())
+                    .or_default()
+                    .push((t.file_path.clone(), t.trap_type.clone()));
+            }
+        }
+        if by_parent.is_empty() {
+            return;
+        }
+        let parents: HashSet<PathBuf> = by_parent.keys().cloned().collect();
+
+        std::thread::spawn(move || {
+            use notify::{RecursiveMode, Watcher};
+            let (tx, rx) = std::sync::mpsc::channel();
+            let mut watcher = match notify::RecommendedWatcher::new(
+                move |res| {
+                    let _ = tx.send(res);
+                },
+                notify::Config::default(),
+            ) {
+                Ok(w) => w,
+                Err(e) => {
+                    tracing::warn!("canary inotify watcher unavailable: {e}");
+                    return;
+                }
+            };
+            for parent in &parents {
+                if let Err(e) = watcher.watch(parent, RecursiveMode::NonRecursive) {
+                    tracing::warn!(parent = %parent.display(), "canary watch failed: {e}");
+                }
+            }
+            // Keep watcher alive for the thread lifetime.
+            let _keep = watcher;
+            loop {
+                if !is_armed.load(Ordering::SeqCst)
+                    || watch_generation.load(Ordering::SeqCst) != generation
+                {
+                    break;
+                }
+                let res = rx.recv_timeout(StdDuration::from_millis(500));
+                let Ok(Ok(event)) = res else {
+                    continue;
+                };
+                use notify::EventKind;
+                let relevant = matches!(
+                    event.kind,
+                    EventKind::Access(_) | EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
+                );
+                if !relevant {
+                    continue;
+                }
+                for event_path in &event.paths {
+                    for (trap_path, trap_type) in by_parent.values().flatten() {
+                        let matches = event_path == trap_path
+                            || event_path.file_name().is_some_and(|f| {
+                                trap_path.file_name().is_some_and(|tf| f == tf)
+                                    && event_path
+                                        .parent()
+                                        .is_some_and(|p| p == trap_path.parent().unwrap_or(Path::new("")))
+                            });
+                        if matches
+                            && is_armed.load(Ordering::SeqCst)
+                            && watch_generation.load(Ordering::SeqCst) == generation
+                        {
+                            // Single-winner: only first sensor (polling vs inotify) counts.
+                            if is_armed.swap(false, Ordering::SeqCst) {
+                                handle_canary_trigger(
+                                    event_sender.as_ref(),
+                                    triggered_count.as_ref(),
+                                    trap_path,
+                                    trap_type,
+                                    session_id.as_deref(),
+                                );
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+        });
     }
 
     fn spawn_watcher(
@@ -259,15 +435,17 @@ users:
                         };
 
                         if modified || accessed {
-                            handle_canary_trigger(
-                                event_sender.as_ref(),
-                                triggered_count.as_ref(),
-                                &baseline.path,
-                                &baseline.trap_type,
-                                session_id.as_deref(),
-                            );
-                            if watch_generation.load(Ordering::SeqCst) == generation {
-                                is_armed.store(false, Ordering::SeqCst);
+                            // Single-winner with inotify sensor (п.8).
+                            if is_armed.swap(false, Ordering::SeqCst)
+                                && watch_generation.load(Ordering::SeqCst) == generation
+                            {
+                                handle_canary_trigger(
+                                    event_sender.as_ref(),
+                                    triggered_count.as_ref(),
+                                    &baseline.path,
+                                    &baseline.trap_type,
+                                    session_id.as_deref(),
+                                );
                             }
                             return;
                         }
@@ -452,5 +630,77 @@ mod tests {
 
         assert_eq!(event.event_type, SecurityEventType::CanaryAccess);
         assert_eq!(event.session_id.as_deref(), Some("session-mtime"));
+    }
+
+    #[tokio::test]
+    async fn does_not_overwrite_preexisting_user_files() {
+        let temp_dir = TempDir::new().unwrap();
+        // Simulate real user secrets.
+        let ssh_dir = temp_dir.path().join(".ssh");
+        tokio::fs::create_dir_all(&ssh_dir).await.unwrap();
+        let real_key = ssh_dir.join("id_rsa");
+        tokio::fs::write(&real_key, "REAL-USER-KEY-DO-NOT-TOUCH")
+            .await
+            .unwrap();
+        let aws_dir = temp_dir.path().join(".aws");
+        tokio::fs::create_dir_all(&aws_dir).await.unwrap();
+        let real_creds = aws_dir.join("credentials");
+        tokio::fs::write(&real_creds, "REAL-AWS-CREDS")
+            .await
+            .unwrap();
+
+        let mut manager = CanaryManager::new();
+        let traps = manager.arm_canaries(temp_dir.path()).await.unwrap();
+
+        // Pre-existing paths must be skipped, not planted.
+        assert!(!traps.iter().any(|t| t.file_path == real_key));
+        assert!(!traps.iter().any(|t| t.file_path == real_creds));
+        assert_eq!(
+            tokio::fs::read_to_string(&real_key).await.unwrap(),
+            "REAL-USER-KEY-DO-NOT-TOUCH"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(&real_creds).await.unwrap(),
+            "REAL-AWS-CREDS"
+        );
+        // The remaining decoys should still be planted.
+        assert!(traps.iter().any(|t| t.trap_type == "env_secrets"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn does_not_chmod_preexisting_dirs() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp_dir = TempDir::new().unwrap();
+        let ssh_dir = temp_dir.path().join(".ssh");
+        tokio::fs::create_dir_all(&ssh_dir).await.unwrap();
+        std::fs::set_permissions(&ssh_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let mut manager = CanaryManager::new();
+        // Pre-create the target file so canary skips it; dir perms must stay intact.
+        let real_key = ssh_dir.join("id_rsa");
+        tokio::fs::write(&real_key, "REAL").await.unwrap();
+        std::fs::set_permissions(&real_key, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let _ = manager.arm_canaries(temp_dir.path()).await.unwrap();
+
+        let dir_mode = std::fs::metadata(&ssh_dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700, "pre-existing .ssh dir mode must be preserved");
+        let file_mode = std::fs::metadata(&real_key).unwrap().permissions().mode() & 0o777;
+        assert_eq!(file_mode, 0o600, "pre-existing key mode must be preserved");
+
+        // Freshly planted decoys must stay world-writable so the unprivileged
+        // agent UID can trip them (otherwise deception never engages).
+        let fresh = manager
+            .get_traps()
+            .iter()
+            .find(|t| t.trap_type == "env_secrets")
+            .expect("env decoy should be planted in a fresh dir");
+        let fresh_mode = std::fs::metadata(&fresh.file_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(fresh_mode, 0o666, "new canary must stay agent-writable");
     }
 }

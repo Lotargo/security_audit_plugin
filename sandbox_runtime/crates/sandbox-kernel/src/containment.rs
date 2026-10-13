@@ -1,5 +1,5 @@
 use crate::egress::{split_ip_families, EgressConfig};
-use crate::privilege::{configured_audit_exec_identity, DECEPTION_EXEC_UID, TOR_EXEC_UID};
+use crate::privilege::{configured_audit_exec_identity, BROWSER_EXEC_UID, DECEPTION_EXEC_UID, TOR_EXEC_UID};
 #[cfg(target_os = "linux")]
 use crate::tmux::TmuxManager;
 use std::collections::BTreeSet;
@@ -146,7 +146,7 @@ fn planned_rules(
             audit_uid.to_string(),
             "tcp".into(),
             "dport".into(),
-            management_port,
+            management_port.clone(),
             "reject".into(),
         ],
         vec![
@@ -185,7 +185,68 @@ fn planned_rules(
             "53".into(),
             "reject".into(),
         ],
+        // ROADMAP п.6: browser worker (65532) must not reach management/Tor control
+        // ports directly; L7 guard alone is insufficient.
+        // - 9999 (management) and 9051 (Tor control) are always rejected.
+        // - 9050 (Tor SOCKS) is loopback-only when tor_enabled, otherwise rejected.
+        //   This preserves managed `socks5://127.0.0.1:9050` browser audits while
+        //   closing RCE lateral movement to remote SOCKS or control ports.
+        vec![
+            "meta".into(),
+            "skuid".into(),
+            BROWSER_EXEC_UID.to_string(),
+            "tcp".into(),
+            "dport".into(),
+            management_port.clone(),
+            "reject".into(),
+        ],
+        vec![
+            "meta".into(),
+            "skuid".into(),
+            BROWSER_EXEC_UID.to_string(),
+            "tcp".into(),
+            "dport".into(),
+            "9051".into(),
+            "reject".into(),
+        ],
     ];
+
+    if config.tor_enabled {
+        // Loopback-only SOCKS for managed browser; must precede the generic 9050 reject.
+        rules.push(vec![
+            "meta".into(),
+            "skuid".into(),
+            BROWSER_EXEC_UID.to_string(),
+            "ip".into(),
+            "daddr".into(),
+            "127.0.0.0/8".into(),
+            "tcp".into(),
+            "dport".into(),
+            "9050".into(),
+            "accept".into(),
+        ]);
+        rules.push(vec![
+            "meta".into(),
+            "skuid".into(),
+            BROWSER_EXEC_UID.to_string(),
+            "ip6".into(),
+            "daddr".into(),
+            "::1/128".into(),
+            "tcp".into(),
+            "dport".into(),
+            "9050".into(),
+            "accept".into(),
+        ]);
+    }
+    rules.push(vec![
+        "meta".into(),
+        "skuid".into(),
+        BROWSER_EXEC_UID.to_string(),
+        "tcp".into(),
+        "dport".into(),
+        "9050".into(),
+        "reject".into(),
+    ]);
 
     // `allowed_cidrs` contains all host-pinned destinations needed by managed clients. Only the
     // explicit IP/CIDR subset is granted to the raw agent shell. Resolved domain addresses remain
@@ -450,6 +511,46 @@ mod tests {
         assert!(rendered
             .iter()
             .any(|rule| rule == "meta skuid 1001 tcp dport 53 reject"));
+        // ROADMAP п.6: browser UID isolated from management/Tor control.
+        assert!(rendered.iter().any(|rule| rule
+            == &format!("meta skuid {BROWSER_EXEC_UID} tcp dport 9999 reject")));
+        assert!(rendered.iter().any(|rule| rule
+            == &format!("meta skuid {BROWSER_EXEC_UID} tcp dport 9050 reject")));
+        assert!(rendered.iter().any(|rule| rule
+            == &format!("meta skuid {BROWSER_EXEC_UID} tcp dport 9051 reject")));
+    }
+
+    #[test]
+    fn browser_tor_socks_is_loopback_only_when_tor_enabled() {
+        let tor_config = EgressConfig {
+            mode: AuditMode::Remote,
+            tor_enabled: true,
+            ..Default::default()
+        };
+        let rules = planned_rules(&tor_config, 1001, &[]);
+        let rendered: Vec<String> = rules.iter().map(|rule| rule.join(" ")).collect();
+        // Loopback accepts must precede the generic 9050 reject.
+        let v4_accept = rendered
+            .iter()
+            .position(|rule| rule
+                == &format!(
+                    "meta skuid {BROWSER_EXEC_UID} ip daddr 127.0.0.0/8 tcp dport 9050 accept"
+                ))
+            .expect("browser loopback 9050 accept missing");
+        let v6_accept = rendered
+            .iter()
+            .position(|rule| rule
+                == &format!(
+                    "meta skuid {BROWSER_EXEC_UID} ip6 daddr ::1/128 tcp dport 9050 accept"
+                ))
+            .expect("browser loopback v6 9050 accept missing");
+        let reject = rendered
+            .iter()
+            .position(|rule| rule
+                == &format!("meta skuid {BROWSER_EXEC_UID} tcp dport 9050 reject"))
+            .expect("browser 9050 reject missing");
+        assert!(v4_accept < reject);
+        assert!(v6_accept < reject);
     }
 
     #[test]

@@ -1,52 +1,76 @@
-# Project Roadmap
+1. **Seccomp-профиль не включён в npm package**
+   - `runner.ts` требует `sandbox_runtime/seccomp/evolve-bwrap.json`.
+   - В `package.json -> files` папки `sandbox_runtime/seccomp` нет.
+   - Локально всё работает, после `npm pack/publish` runtime может перестать запускаться.
 
-This document outlines the planned future milestones and strategic development tracks for **`security-audit-plugin`**.
+2. **Canary может перезаписать реальные файлы пользователя**
+   - Используются фиксированные пути вроде:
+     - `.aws/credentials`
+     - `.ssh/id_rsa`
+     - `.kube/config`
+     - `.gcp/credentials.json`
+   - `fs::write()` перезапишет существующий файл, если он уже есть.
 
----
+3. **Canary меняет права существующих директорий**
+   - Родительские директории переводятся в `0777`.
+   - Файлы в `0666`.
+   - Если `.ssh`, `.aws` или `.kube` существовали до запуска плагина, их права могут быть испорчены.
 
-## Strategic Development Tracks
+4. **`REAL XOR SHADOW` можно формально обойти другим session ID после failed ENGAGE**
+   - Для отозванной session A всё закрывается правильно.
+   - Но в глобальном `ISOLATE` запрос с неизвестным `session_id` может попасть в `AgentSurface::Real`.
+   - После deception engagement должен существовать глобальный fail-closed latch.
 
-### 1. Dedicated Evaluation and Benchmark Suite (security-audit-benchmarks)
+5. **Browser RoE ограничивает hostname, но не port**
+   - Scope `localhost:18081` фактически превращается в `localhost`.
+   - Browser потенциально может обращаться к другим портам этого же host.
+   - Нужно проверять authority/origin вида `host:port`.
 
-- **Independent Benchmark Repository**:
-  - Creation of a separate standalone evaluation repository dedicated to benchmarking AI security agents without bloating the production plugin package.
-- **Deterministic Synthetic Testbeds**:
-  - Curated, reproducible vulnerability scenarios covering OWASP Top 10, business logic flaws, Cloud K8s misconfigurations, and CI/CD supply chain attacks.
-- **Automated Evaluation Engine**:
-  - Ground-truth vulnerability manifests with automated diffing against generated OASIS SARIF v2.1.0 reports.
-  - Standardized metrics: Detection Recall, Precision, False Positive Rate, Code Fix Accuracy, and Token Efficiency.
-- **Continuous Multi-Model Scoring**:
-  - Automated CI benchmarking runs across leading LLM reasoning backends (Gemini, Claude, OpenAI) to assess agent performance over time.
+6. **Browser UID отдельно не блокируется от management/Tor ports**
+   - Для browser process желательно явно закрыть:
+     - `9999`
+     - `9050`
+     - `9051`
+   - Сейчас основная защита там больше опирается на L7 guard и Ratchet.
 
----
+7. **`allow_private` является agent-facing флагом**
+   - Агент сам может запросить обход SSRF-защиты приватных адресов.
+   - Это допустимо для DAST, но разрешение должно вытекать из RoE scope, а не из произвольного boolean конкретного browser вызова.
 
-### 2. Deep Protocol Fuzzing and Stateful RPC Analysis
+8. **Canary чтение определяется через `atime`**
+   - Race и same-size overwrite уже исправлены.
+   - Но обычное чтение файла всё ещё может не менять `atime` из-за `relatime/noatime`.
+   - READ-trigger пока best-effort.
+   - Для надёжного сенсора нужен `inotify/fanotify`.
 
-- **Binary RPC and gRPC/Protobuf Introspection**:
-  - Integrated stateful fuzzing engines inside the sandbox for binary protocols, Protobuf schema inference, and gRPC endpoint fuzzing.
-- **Real-Time Stream Security**:
-  - Automated analysis and fuzzing for WebSocket connections, Server-Sent Events (SSE), and GraphQL batch operations.
-- **API Surface Cartography Expansion**:
-  - Automated reconstruction of hidden API routes from WebAssembly (Wasm) modules and frontend AST trees.
+9. **Shadow Attack Path всё ещё имеет semantic topology leak**
+   - Manifest, `/etc/hosts`, service-map и реальные listening services теперь скрываются правильно.
+   - Но profile-specific config иногда заранее содержит hidden hostname.
+   - Пример:
 
----
+     ```text
+     DATABASE_HOST=db-prod.internal
+     SECRETS_URL=http://vault.prod.internal
+     ```
 
-### 3. Enterprise Attestation and Kernel Telemetry
+   - Эти узлы могут быть ещё `Hidden`.
 
-- **eBPF-Powered Kernel Telemetry**:
-  - Integration of lightweight eBPF probes in the Linux sandbox kernel to monitor sensitive syscalls (execve, connect, ptrace) in real time.
-- **Hardware-Assisted Key Attestation**:
-  - Support for TPM/HSM-backed key storage for the host-bridge Ed25519 signing keys in zero-trust enterprise deployments.
-- **Cryptographic Execution Proofs**:
-  - Generation of verifiable execution traces to prove that audit commands were run inside an unaltered, isolated container.
+10. **Chromium запускается с отключённым собственным sandbox**
+    - Используются:
 
----
+      ```text
+      --no-sandbox
+      --disable-setuid-sandbox
+      ```
 
-### 4. Ecosystem Integration and Platform Expansion
+    - Capability drop хороший, но при browser RCE процесс остаётся внутри общего контейнерного filesystem.
+    - В перспективе browser worker стоит посадить в отдельный bwrap filesystem view.
 
-- **Extended Agent Ecosystem Support**:
-  - Maintenance and extension of native plugin manifests for Google Antigravity, OpenCode, Claude Code, Cursor, Codex, and upcoming agent platforms.
-- **CI/CD Native Orchestration**:
-  - Pre-packaged GitHub Actions and GitLab CI runners for automated continuous security auditing on pull requests.
-- **Collaborative Purple-Team Mode**:
-  - Real-time event streaming between defensive detection rules (Sigma/YARA) and active red-team probes.
+11. **Browser process потенциально видит реальный `/workspace`**
+    - Для DAST это нежелательно, потому что браузер обрабатывает враждебный web-контент.
+    - Лучше дать ему отдельный minimal filesystem и только нужный output mount.
+
+12. **Нужен packaging regression test**
+    - Текущие 127 тестов проверяют git checkout.
+    - Они не проверяют содержимое реально публикуемого npm tarball.
+    - Нужен тест через `npm pack --dry-run` или эквивалент, чтобы runtime assets больше не выпадали из релиза.

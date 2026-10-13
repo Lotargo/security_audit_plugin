@@ -34,7 +34,9 @@ export const BrowserAuditSchema = z.object({
     .boolean()
     .optional()
     .default(false)
-    .describe('Allow audit of RFC1918 / loopback endpoints when explicitly in scope'),
+    .describe(
+      'Deprecated: ignored, private-loopback permission is derived from the active RoE scope, not per-call input'
+    ),
 });
 
 export function registerBrowserTool(server: any, bridge: SandboxBridge) {

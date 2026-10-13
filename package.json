@@ -21,6 +21,7 @@
     "sandbox_runtime/Cargo.toml",
     "sandbox_runtime/Cargo.lock",
     "sandbox_runtime/crates",
+    "sandbox_runtime/seccomp",
     "sandbox_runtime/stealth",
     "sandbox_runtime/tor",
     "gemini-extension.json",

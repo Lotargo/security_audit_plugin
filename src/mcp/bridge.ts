@@ -11,6 +11,7 @@ import {
   normalizeScopeHosts,
   resolveScopeTargets,
 } from './security/scope_resolver.js';
+import { isPrivateOrRestrictedIp, normalizeHost } from './security/browser_guard.js';
 import { DockerRunner } from '../docker/runner.js';
 
 export interface ScopeOptions {
@@ -90,6 +91,42 @@ function assertNoAuthorityOverride(...headerMaps: Array<Record<string, string> |
       }
     }
   }
+}
+
+/**
+ * ROADMAP п.7: `allow_private` must derive from RoE scope, not from a per-call
+ * agent boolean. Returns true only if the active scope explicitly contains a
+ * loopback/private host (localhost, 127.x, RFC1918, link-local, ::1, etc).
+ */
+export function scopeAllowsPrivateHosts(targetHosts: string[]): boolean {
+  for (const entry of targetHosts) {
+    const v = String(entry || '').trim().toLowerCase();
+    if (!v) continue;
+    // Strip optional port: [ipv6]:port, host:port, bare.
+    let host = v;
+    const bracketed = v.match(/^\[([^\]]+)\](?::\d+)?$/);
+    if (bracketed) {
+      host = bracketed[1];
+    } else {
+      const colonCount = (v.match(/:/g) || []).length;
+      if (colonCount === 1) {
+        const idx = v.lastIndexOf(':');
+        if (/^\d+$/.test(v.slice(idx + 1))) host = v.slice(0, idx);
+      } else if (colonCount === 0) {
+        host = v;
+      } else {
+        // Bare IPv6 literal.
+        host = v.startsWith('[') && v.endsWith(']') ? v.slice(1, -1) : v;
+      }
+    }
+    host = normalizeHost(host);
+    if (host === 'localhost') return true;
+    if (host.endsWith('.localhost')) return true;
+    if (/^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host.includes(':')) {
+      if (isPrivateOrRestrictedIp(host)) return true;
+    }
+  }
+  return false;
 }
 
 export class SandboxBridge {
@@ -473,8 +510,12 @@ export class SandboxBridge {
   public async browserAudit(options: BrowserAuditOptions): Promise<any> {
     assertNoAuthorityOverride(options.auth_headers, options.spoof_headers);
     const networkPolicy = this.prepareManagedNetworkCall(options.url, options.proxy);
+    // ROADMAP п.7: ignore agent-supplied boolean, derive from RoE scope.
+    const scopePrivate = scopeAllowsPrivateHosts(networkPolicy.allowedHosts);
     return this.request('POST', '/browser_audit', {
       ...options,
+      allow_private: scopePrivate,
+      scope_allows_private: scopePrivate,
       proxy: networkPolicy.useTor ? TOR_BROWSER_PROXY : null,
       allowed_hosts: networkPolicy.allowedHosts,
       evolve_session_id: this.activeEvolveSessionId,

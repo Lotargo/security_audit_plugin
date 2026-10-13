@@ -137,4 +137,40 @@ describe('SandboxBridge managed network scope', () => {
     ).rejects.toThrow('External upstream proxy containment is not implemented safely yet');
     expect(request).not.toHaveBeenCalled();
   });
+
+  it('derives allow_private from RoE scope instead of agent input (ROADMAP п.7)', async () => {
+    const { bridge, request } = mockedBridge();
+    await bridge.setScope({ mode: 'remote', targets: ['203.0.113.7'], arm_canaries: false });
+    request.mockClear();
+
+    // Public scope: even explicit allow_private:true must not enable private access.
+    await bridge.browserAudit({ url: 'https://203.0.113.7/', allow_private: true } as any);
+    expect(request).toHaveBeenCalledWith(
+      'POST',
+      '/browser_audit',
+      expect.objectContaining({ allow_private: false, scope_allows_private: false })
+    );
+  });
+
+  it('enables private loopback only when scope contains it and enforces ports (п.5, п.7)', async () => {
+    const { bridge, request } = mockedBridge();
+    await bridge.setScope({ mode: 'remote', targets: ['localhost:18081'], arm_canaries: false });
+    request.mockClear();
+
+    await bridge.browserAudit({ url: 'http://localhost:18081/' });
+    expect(request).toHaveBeenCalledWith(
+      'POST',
+      '/browser_audit',
+      expect.objectContaining({
+        allow_private: true,
+        scope_allows_private: true,
+        allowed_hosts: ['localhost:18081'],
+      })
+    );
+
+    request.mockClear();
+    await expect(bridge.browserAudit({ url: 'http://localhost:9999/' })).rejects.toThrow(
+      'outside the active audit scope'
+    );
+  });
 });

@@ -8,6 +8,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
+use crate::browser_sandbox;
 use crate::evolve_events::EvolveEventSink;
 use crate::surface_guard::{resolve_agent_surface, AgentSurface};
 use sandbox_kernel::browser_exec_identity;
@@ -174,7 +175,26 @@ pub async fn handle_browser_audit(
         "started",
     );
 
-    let config_bytes = serde_json::to_vec(&config).map_err(|e| {
+    // ROADMAP п.11: isolate browser filesystem view. Never hand the real
+    // /workspace to hostile web content; use a per-audit /tmp dir and force
+    // out_dir into it even if the caller requested /workspace.
+    let audit_id = evolve_session_id(&config).unwrap_or("browser-audit");
+    let isolated_out = browser_sandbox::isolated_output_dir(audit_id).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("Failed to isolate browser output: {}", e)})),
+        )
+    })?;
+    let mut config_value = config.clone();
+    if let Some(obj) = config_value.as_object_mut() {
+        obj.insert(
+            "out_dir".to_string(),
+            serde_json::Value::String(isolated_out.to_string_lossy().into_owned()),
+        );
+        // Defense in depth: strip legacy workspace output even if launcher defaults change.
+        // isolated_out is already under /tmp.
+    }
+    let config_bytes = serde_json::to_vec(&config_value).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": format!("Invalid browser config: {}", e)})),
@@ -182,33 +202,70 @@ pub async fn handle_browser_audit(
     })?;
 
     let (uid, gid) = browser_exec_identity();
-    let mut command = Command::new("/usr/bin/setpriv");
-    command
-        .arg(format!("--reuid={uid}"))
-        .arg(format!("--regid={gid}"))
-        .arg("--clear-groups")
-        .arg("--bounding-set=-all")
-        .arg("--inh-caps=-all")
-        .arg("--ambient-caps=-all")
-        .arg("--no-new-privs")
-        .arg("--")
-        .arg("/usr/bin/node")
-        .arg("/opt/stealth/browser_launcher.js")
-        .arg("--stdin-json")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .env_clear()
-        .env("HOME", "/tmp")
-        .env("XDG_CONFIG_HOME", "/tmp")
-        .env("XDG_CACHE_HOME", "/tmp")
-        .env("USER", "audit-browser")
-        .env("LOGNAME", "audit-browser")
-        .env("PATH", SAFE_CHILD_PATH)
-        .env("LANG", "C.UTF-8")
-        .env("CHROMIUM_PATH", "/usr/lib/chromium/chromium")
-        .env("NODE_PATH", "/opt/stealth/node_modules");
+    // Prefer bwrap filesystem isolation (п.10/п.11) where the kernel allows it;
+    // fall back to the legacy setpriv path on runtimes where bwrap namespaces
+    // are rejected (e.g. Docker Desktop pivot_root EPERM). out_dir stays
+    // isolated under /var/tmp in both cases, never the real /workspace.
+    let use_bwrap = browser_sandbox::is_bwrap_functional();
+    if !use_bwrap {
+        tracing::warn!("bwrap namespaces unavailable, browser audit uses setpriv fallback without filesystem view isolation");
+    }
+    let mut command = match use_bwrap
+        .then(|| browser_sandbox::command(&isolated_out))
+        .transpose()
+    {
+        Ok(Some(mut bwrap)) => {
+            bwrap
+                .arg("--")
+                .arg("/usr/bin/setpriv")
+                .arg(format!("--reuid={uid}"))
+                .arg(format!("--regid={gid}"))
+                .arg("--clear-groups")
+                .arg("--bounding-set=-all")
+                .arg("--inh-caps=-all")
+                .arg("--ambient-caps=-all")
+                .arg("--no-new-privs")
+                .arg("--")
+                .arg("/usr/bin/node")
+                .arg("/opt/stealth/browser_launcher.js")
+                .arg("--stdin-json")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+            bwrap
+        }
+        Err(_) | Ok(None) => {
+            let mut fallback = Command::new("/usr/bin/setpriv");
+            fallback
+                .arg(format!("--reuid={uid}"))
+                .arg(format!("--regid={gid}"))
+                .arg("--clear-groups")
+                .arg("--bounding-set=-all")
+                .arg("--inh-caps=-all")
+                .arg("--ambient-caps=-all")
+                .arg("--no-new-privs")
+                .arg("--")
+                .arg("/usr/bin/node")
+                .arg("/opt/stealth/browser_launcher.js")
+                .arg("--stdin-json")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .env_clear()
+                .env("HOME", "/tmp")
+                .env("XDG_CONFIG_HOME", "/tmp")
+                .env("XDG_CACHE_HOME", "/tmp")
+                .env("USER", "audit-browser")
+                .env("LOGNAME", "audit-browser")
+                .env("PATH", SAFE_CHILD_PATH)
+                .env("LANG", "C.UTF-8")
+                .env("CHROMIUM_PATH", "/usr/lib/chromium/chromium")
+                .env("NODE_PATH", "/opt/stealth/node_modules");
+            fallback
+        }
+    };
 
     let mut child = command.spawn().map_err(|e| {
         error!("Failed to start browser launcher: {}", e);

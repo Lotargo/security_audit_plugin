@@ -14,6 +14,7 @@ use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod auth;
+mod browser_sandbox;
 mod deception_exec;
 mod deception_fs;
 mod deception_runtime;

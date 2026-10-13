@@ -64,7 +64,13 @@ export async function runAudit() {
   }
 
   const timeoutMs = config.timeout_ms || 30000;
-  const outDir = config.out_dir || '/workspace/reports';
+  // ROADMAP п.11: never persist hostile-web-derived artifacts into the real
+  // /workspace by default. Daemon overrides out_dir with an isolated per-audit
+  // dir; legacy /workspace/reports is redirected to /tmp.
+  let outDir = config.out_dir || '/tmp/browser-reports';
+  if (outDir === '/workspace' || outDir.startsWith('/workspace/')) {
+    outDir = '/tmp/browser-reports';
+  }
   const skipWarmup = config.skip_warmup === true;
   const humanize = config.bypass_turnstile !== false;
 

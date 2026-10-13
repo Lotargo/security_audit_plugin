@@ -61,8 +61,8 @@ describe('scope resolver', () => {
 
   it('builds exact L7 host allowlists and rejects broad proxy/Tor CIDRs', () => {
     expect(
-      normalizeScopeHosts(['https://Example.COM/path', '203.0.113.7', '[2001:db8::1]:443'])
-    ).toEqual(['2001:db8::1', '203.0.113.7', 'example.com']);
+      normalizeScopeHosts(['https://Example.COM/path', '203.0.113.7', 'example.com:8443'])
+    ).toEqual(['203.0.113.7', 'example.com', 'example.com:8443']);
 
     expect(() => normalizeScopeHosts(['198.51.100.0/24'])).toThrow(
       'Proxy/Tor scope target must be a single host'
@@ -75,5 +75,16 @@ describe('scope resolver', () => {
     expect(isUrlInScope('https://api.example.com/v1', hosts)).toBe(true);
     expect(isUrlInScope('https://www.example.com/', hosts)).toBe(false);
     expect(isUrlInScope('file:///etc/passwd', hosts)).toBe(false);
+  });
+
+  it('enforces explicit ports without expanding host:port to bare host (ROADMAP п.5)', () => {
+    const hosts = normalizeScopeHosts(['localhost:18081']);
+    expect(hosts).toEqual(['localhost:18081']);
+    expect(isUrlInScope('http://localhost:18081/', hosts)).toBe(true);
+    expect(isUrlInScope('http://localhost:9999/', hosts)).toBe(false);
+    expect(isUrlInScope('http://localhost:9050/', hosts)).toBe(false);
+    // Bare host keeps legacy any-port semantics.
+    const bare = normalizeScopeHosts(['localhost']);
+    expect(isUrlInScope('http://localhost:9999/', bare)).toBe(true);
   });
 });
